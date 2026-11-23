@@ -246,11 +246,11 @@ export const LevelSelectModal: React.FC<LevelSelectModalProps> = ({
           )}
         </div>
 
-        {/* 6 Avatars & Signature Special Powers */}
+        {/* Avatars & Signature Special Powers */}
         <div className="mt-7 border-t border-white/10 pt-5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <h2 className="font-display text-sm font-bold text-slate-200">
-              Avatars & Special Powers
+              Avatars & Special Powers ({CRAFT_SKINS.length})
             </h2>
             <span className="text-xs text-slate-400">
               Press E, Shift, or Right-Click in flight to activate

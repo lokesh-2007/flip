@@ -10,7 +10,10 @@ export type SpecialPowerType =
   | 'slowmo'
   | 'breaker'
   | 'phase'
-  | 'overdrive';
+  | 'overdrive'
+  | 'pulse'
+  | 'warp'
+  | 'vortex';
 
 export type AvatarShape =
   | 'gyro'
@@ -18,7 +21,11 @@ export type AvatarShape =
   | 'prism'
   | 'scythe'
   | 'phantom'
-  | 'nova';
+  | 'nova'
+  | 'shuriken'
+  | 'viper'
+  | 'lotus'
+  | 'titan';
 
 export interface SawObstacle {
   id: string;

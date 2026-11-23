@@ -329,13 +329,20 @@ class SoundEngine {
       osc2.type = 'triangle';
       osc2.frequency.setValueAtTime(370, now);
       osc2.frequency.exponentialRampToValueAtTime(105, now + 0.28);
-    } else if (powerType === 'breaker') {
+    } else if (powerType === 'breaker' || powerType === 'pulse') {
       osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(280, now);
-      osc.frequency.exponentialRampToValueAtTime(980, now + 0.2);
+      osc.frequency.exponentialRampToValueAtTime(980, now + 0.22);
       osc2.type = 'square';
       osc2.frequency.setValueAtTime(140, now);
-      osc2.frequency.exponentialRampToValueAtTime(490, now + 0.2);
+      osc2.frequency.exponentialRampToValueAtTime(520, now + 0.22);
+    } else if (powerType === 'warp') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(320, now);
+      osc.frequency.exponentialRampToValueAtTime(1480, now + 0.26);
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(480, now);
+      osc2.frequency.exponentialRampToValueAtTime(1120, now + 0.26);
     } else {
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(360, now);

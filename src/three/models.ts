@@ -201,6 +201,153 @@ function buildAvatarBody(
       spire.rotation.x = a + Math.PI / 2;
       bodyGroup.add(spire);
     }
+  } else if (skin.shape === 'shuriken') {
+    // Volt Shuriken: 4 swept extruded plasma blades + rotating spinner core
+    coreMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), coreMat);
+    bodyGroup.add(coreMesh);
+
+    const bladeShape = new THREE.Shape();
+    bladeShape.moveTo(0, 0.14);
+    bladeShape.lineTo(0.22, 0.22);
+    bladeShape.lineTo(0.56, 0.04);
+    bladeShape.lineTo(0.26, -0.14);
+    bladeShape.closePath();
+
+    const bladeGeo = new THREE.ExtrudeGeometry(bladeShape, {
+      depth: 0.07,
+      bevelEnabled: true,
+      bevelThickness: 0.02,
+      bevelSize: 0.02,
+      bevelSegments: 2,
+    });
+    bladeGeo.center();
+
+    for (let i = 0; i < 4; i++) {
+      const angle = (i / 4) * Math.PI * 2;
+      const arm = new THREE.Mesh(bladeGeo, i % 2 === 0 ? metalMat : rimMat);
+      arm.rotation.y = Math.PI / 2;
+      arm.rotation.x = angle;
+      arm.position.set(0, Math.sin(angle) * 0.34, Math.cos(angle) * 0.34);
+      bodyGroup.add(arm);
+    }
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.036, 8, 28), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.028, 8, 20), coreMat);
+    innerRing.rotation.x = Math.PI / 4;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'viper') {
+    // Cobalt Viper: Twin-prong cyber jet + needle prow + turbine pods
+    const prowGeo = new THREE.ConeGeometry(0.2, 0.85, 6);
+    prowGeo.rotateX(Math.PI / 2);
+    coreMesh = new THREE.Mesh(prowGeo, metalMat);
+    coreMesh.position.z = 0.18;
+    bodyGroup.add(coreMesh);
+
+    const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.16, 14, 14), coreMat);
+    canopy.scale.set(0.85, 0.7, 1.8);
+    canopy.position.set(0, 0.12, 0.08);
+    bodyGroup.add(canopy);
+
+    const prongGeo = new THREE.BoxGeometry(0.12, 0.08, 0.92);
+    const leftProng = new THREE.Mesh(prongGeo, rimMat);
+    leftProng.position.set(-0.32, -0.02, 0.04);
+    leftProng.rotation.y = 0.12;
+    bodyGroup.add(leftProng);
+
+    const rightProng = new THREE.Mesh(prongGeo, rimMat);
+    rightProng.position.set(0.32, -0.02, 0.04);
+    rightProng.rotation.y = -0.12;
+    bodyGroup.add(rightProng);
+
+    const wingGeo = new THREE.BoxGeometry(0.95, 0.045, 0.28);
+    const wing = new THREE.Mesh(wingGeo, metalMat);
+    wing.position.set(0, 0, -0.16);
+    bodyGroup.add(wing);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.032, 8, 24), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    outerRing.position.z = -0.12;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.026, 8, 18), coreMat);
+    innerRing.position.z = -0.34;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'lotus') {
+    // Crimson Lotus: Crystalline bloom core + 6 sculpted geometric petals
+    coreMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.26, 0), coreMat);
+    bodyGroup.add(coreMesh);
+
+    const shellMesh = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 16), shellMat);
+    bodyGroup.add(shellMesh);
+
+    const petalShape = new THREE.Shape();
+    petalShape.moveTo(0, 0);
+    petalShape.lineTo(0.14, 0.24);
+    petalShape.lineTo(0, 0.52);
+    petalShape.lineTo(-0.14, 0.24);
+    petalShape.closePath();
+
+    const petalGeo = new THREE.ExtrudeGeometry(petalShape, {
+      depth: 0.04,
+      bevelEnabled: true,
+      bevelThickness: 0.015,
+      bevelSize: 0.015,
+      bevelSegments: 2,
+    });
+    petalGeo.center();
+
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const petal = new THREE.Mesh(petalGeo, i % 2 === 0 ? rimMat : metalMat);
+      petal.position.set(Math.cos(a) * 0.34, Math.sin(a) * 0.34, -0.05);
+      petal.rotation.z = a - Math.PI / 2;
+      petal.rotation.x = 0.35;
+      bodyGroup.add(petal);
+    }
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.035, 8, 28), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.025, 8, 24), coreMat);
+    innerRing.rotation.x = Math.PI / 3;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'titan') {
+    // Obsidian Titan: Heavy armored mech-pod + twin shield plates + molten core
+    coreMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.4, 0.56, 6), metalMat);
+    coreMesh.rotation.x = Math.PI / 2;
+    bodyGroup.add(coreMesh);
+
+    const furnaceCore = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 16), coreMat);
+    furnaceCore.position.z = 0.2;
+    bodyGroup.add(furnaceCore);
+
+    const plateGeo = new THREE.BoxGeometry(0.14, 0.54, 0.64);
+    const leftPlate = new THREE.Mesh(plateGeo, metalMat);
+    leftPlate.position.set(-0.44, 0, 0.02);
+    leftPlate.rotation.z = 0.2;
+    bodyGroup.add(leftPlate);
+
+    const rightPlate = new THREE.Mesh(plateGeo, metalMat);
+    rightPlate.position.set(0.44, 0, 0.02);
+    rightPlate.rotation.z = -0.2;
+    bodyGroup.add(rightPlate);
+
+    const bumperGeo = new THREE.BoxGeometry(0.52, 0.14, 0.22);
+    const bumper = new THREE.Mesh(bumperGeo, rimMat);
+    bumper.position.set(0, 0, 0.34);
+    bodyGroup.add(bumper);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.54, 0.048, 8, 6), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.032, 8, 24), coreMat);
+    innerRing.rotation.x = Math.PI / 2;
+    bodyGroup.add(innerRing);
   } else {
     // Gyro Orb (default): Core + shell + titanium outer ring + glowing gimbal + beveled winglets
     coreMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.28, 1), coreMat);

@@ -515,8 +515,38 @@ export class ZigzagEngine {
     this.spawnBurst(0, this.playerY, this.playerZ, 18, this.currentSkin.coreColor, 10);
     this.shakeIntensity = Math.max(this.shakeIntensity, 0.22);
     this.pushCallout(`${this.currentSkin.powerName} Activated`);
+
+    if (this.currentSkin.powerType === 'pulse') {
+      this.triggerEmpBlast(8.8, 100);
+    }
+
     this.emitHud(true);
     return true;
+  }
+
+  private triggerEmpBlast(radius: number, bonusPerTarget: number): void {
+    const rSq = radius * radius;
+    let hitCount = 0;
+    for (const obs of this.runtimeObstacles) {
+      if (obs.destroyed) continue;
+      const d = obs.data;
+      if (d.type === 'saw' || d.type === 'starMine' || d.type === 'block') {
+        const dz = d.z - this.playerZ;
+        const dy = d.y - this.playerY;
+        if (dz * dz + dy * dy <= rSq) {
+          obs.destroyed = true;
+          obs.group.visible = false;
+          hitCount += 1;
+          this.score += bonusPerTarget;
+          this.spawnBurst(0, d.y, d.z, 18, this.currentSkin.coreColor, 10);
+        }
+      }
+    }
+    if (hitCount > 0) {
+      this.shakeIntensity = Math.max(this.shakeIntensity, 0.36);
+      soundEngine.playCollectGold(5);
+      this.pushCallout(`EMP Shattered x${hitCount} (+${hitCount * bonusPerTarget})`);
+    }
   }
 
   public setHolding(holding: boolean): void {
@@ -1345,9 +1375,11 @@ export class ZigzagEngine {
 
     const isPowerActive = this.powerActiveRemaining > 0;
     this.craft.shieldMesh.visible =
-      (isPowerActive && (power === 'shield' || power === 'phase')) || this.invulnTimer > 0;
+      (isPowerActive && (power === 'shield' || power === 'phase' || power === 'warp')) ||
+      this.invulnTimer > 0;
     this.craft.auraRing.visible =
-      isPowerActive && (power === 'magnet' || power === 'overdrive');
+      isPowerActive &&
+      (power === 'magnet' || power === 'overdrive' || power === 'vortex' || power === 'pulse');
     this.craft.laserBeam.visible = isPowerActive && power === 'breaker';
 
     if (this.craft.shieldMesh.visible) {
@@ -1358,6 +1390,10 @@ export class ZigzagEngine {
       this.craft.auraRing.rotation.x += dt * 5.0;
       const s = 1.0 + Math.sin(this.totalElapsed * 12) * 0.12;
       this.craft.auraRing.scale.setScalar(s);
+    }
+
+    if (isPowerActive && power === 'pulse') {
+      this.triggerEmpBlast(2.6, 75);
     }
 
     if (isPowerActive && power === 'breaker') {
@@ -1398,11 +1434,13 @@ export class ZigzagEngine {
     const isPowerActive = this.powerActiveRemaining > 0;
     const modeBaseMult = this.gameMode === 'hardcore' ? 1.15 : 1.0;
     const slowMoFactor = isPowerActive && power === 'slowmo' ? 0.62 : 1.0;
+    const warpFactor = isPowerActive && power === 'warp' ? 1.42 : 1.0;
     const endlessRamp =
       this.gameMode === 'endless' ? Math.min(0.45, this.playerZ / 1500) : 0;
     const scoreMult =
       (this.gameMode === 'hardcore' ? 2.0 : 1.0) *
       (isPowerActive && power === 'overdrive' ? 2.5 : 1.0) *
+      (isPowerActive && power === 'vortex' ? 2.0 : 1.0) *
       this.streakMultiplier;
 
     const climbInput = this.gameMode === 'inverted' ? !this.isHolding : this.isHolding;
@@ -1415,7 +1453,8 @@ export class ZigzagEngine {
         this.currentLevel.baseSpeed *
         (this.activeSpeedMultiplier + endlessRamp) *
         modeBaseMult *
-        slowMoFactor;
+        slowMoFactor *
+        warpFactor;
       const dz = speed * step;
       const dy = (climbInput ? 1 : -1) * speed * WAVE_SLOPE * step;
 
@@ -1479,8 +1518,11 @@ export class ZigzagEngine {
       }
 
       // Collectibles & Streak Multiplier
-      const hasMagnet = isPowerActive && (power === 'magnet' || power === 'overdrive');
-      const magnetRange = power === 'magnet' ? 7.5 : 5.5;
+      const hasMagnet =
+        isPowerActive &&
+        (power === 'magnet' || power === 'overdrive' || power === 'vortex' || power === 'warp');
+      const magnetRange =
+        power === 'vortex' ? 12.5 : power === 'magnet' ? 7.5 : 5.8;
       const pSq = PICKUP_RADIUS * PICKUP_RADIUS;
 
       for (const item of this.runtimeCollectibles) {
@@ -1527,7 +1569,7 @@ export class ZigzagEngine {
 
       // Hazards
       const isIntangible =
-        (isPowerActive && power === 'phase') || this.invulnTimer > 0;
+        (isPowerActive && (power === 'phase' || power === 'warp')) || this.invulnTimer > 0;
       if (!isIntangible) {
         const hitObs = this.checkHazardCollision(this.playerZ, this.playerY);
         if (hitObs) {
