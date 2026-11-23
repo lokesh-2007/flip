@@ -68,6 +68,7 @@ export default function App() {
   const [selectedSkinId, setSelectedSkinId] = useState<string>(initialSaved.selectedSkinId);
 
   const [muted, setMuted] = useState<boolean>(() => soundEngine.isMuted());
+  const [bloomEnabled, setBloomEnabled] = useState<boolean>(true);
   const [cameraMode, setCameraMode] = useState<CameraMode>('isometric');
   const [showLevelSelect, setShowLevelSelect] = useState<boolean>(false);
   const [showCompleteModal, setShowCompleteModal] = useState<boolean>(false);
@@ -77,10 +78,14 @@ export default function App() {
     mode: initialSaved.selectedMode,
     percent: 0,
     distance: 0,
+    sector: 1,
     score: 0,
     stars: [false, false, false],
     attempts: 1,
     activeSpeedMultiplier: 1.0,
+    streakMultiplier: 1.0,
+    nearMissCount: 0,
+    calloutText: null,
     hasCheckpoint: false,
     checkpointPercent: 0,
     powerCharge: 100,
@@ -218,6 +223,14 @@ export default function App() {
     setMuted(nextMuted);
   }, []);
 
+  const handleToggleBloom = useCallback(() => {
+    setBloomEnabled((prev) => {
+      const next = !prev;
+      engineRef.current?.setBloomEnabled(next);
+      return next;
+    });
+  }, []);
+
   const handleToggleCamera = useCallback(() => {
     const mode = engineRef.current?.toggleCameraMode();
     if (mode) setCameraMode(mode);
@@ -287,6 +300,8 @@ export default function App() {
         }
       } else if (e.code === 'KeyM' && !e.repeat) {
         handleToggleMute();
+      } else if (e.code === 'KeyB' && !e.repeat) {
+        handleToggleBloom();
       } else if (e.code === 'KeyC' && !e.repeat) {
         handleToggleCamera();
       } else if (e.code === 'Escape' && !e.repeat) {
@@ -320,6 +335,7 @@ export default function App() {
     clearInputs,
     handleActivatePower,
     handleRestart,
+    handleToggleBloom,
     handleToggleCamera,
     handleToggleMute,
     showCompleteModal,
@@ -371,6 +387,7 @@ export default function App() {
         totalGold={totalGold}
         endlessBest={endlessBest}
         muted={muted}
+        bloomEnabled={bloomEnabled}
         cameraMode={cameraMode}
         onOpenLevels={() => {
           clearInputs();
@@ -378,8 +395,18 @@ export default function App() {
         }}
         onRestart={handleRestart}
         onToggleMute={handleToggleMute}
+        onToggleBloom={handleToggleBloom}
         onToggleCamera={handleToggleCamera}
       />
+
+      {/* Non-intrusive Event Callout (Near-Miss / Sector Milestone / Special Power) */}
+      {hud.calloutText && !showLevelSelect && !showCompleteModal && (
+        <div className="pointer-events-none fixed top-16 left-1/2 z-20 -translate-x-1/2 sm:top-20">
+          <div className="rounded-lg border border-fuchsia-400/45 bg-[#090f28]/90 px-3.5 py-1 font-display text-xs font-bold tracking-wide text-fuchsia-200 shadow-lg">
+            {hud.calloutText}
+          </div>
+        </div>
+      )}
 
       {/* Bottom-Left Special Power Trigger & Charge Gauge */}
       {!showLevelSelect && !showCompleteModal && (
@@ -448,7 +475,7 @@ export default function App() {
             <div className="flex items-center gap-2 text-xs font-medium text-cyan-300">
               <span>
                 {gameMode === 'endless'
-                  ? 'Endless Trench'
+                  ? `Infinity Mode · Sector ${String(hud.sector).padStart(2, '0')}`
                   : hud.hasCheckpoint
                     ? `Checkpoint ${hud.checkpointPercent}%`
                     : `Course 0${currentLevel.number} · ${currentLevel.name}`}

@@ -119,7 +119,7 @@ export interface CraftSkin {
   powerType: SpecialPowerType;
   powerName: string;
   powerDescription: string;
-  powerDuration: number; // seconds (for shield: max standby duration until hit or 8s)
+  powerDuration: number;
 }
 
 export interface LevelProgressRecord {
@@ -134,15 +134,19 @@ export interface HudSnapshot {
   mode: GameMode;
   percent: number;
   distance: number;
+  sector: number;
   score: number;
+  streakMultiplier: number;
+  nearMissCount: number;
+  calloutText: string | null;
   stars: [boolean, boolean, boolean];
   attempts: number;
   activeSpeedMultiplier: number;
   hasCheckpoint: boolean;
   checkpointPercent: number;
   powerCharge: number; // 0..100
-  powerActiveRemaining: number; // seconds remaining, 0 if inactive
+  powerActiveRemaining: number;
   powerDuration: number;
   shieldActive: boolean;
-  musicIntensity: number; // 0..1
+  musicIntensity: number;
 }

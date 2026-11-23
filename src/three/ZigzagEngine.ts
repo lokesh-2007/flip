@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { soundEngine } from '../audio/soundEngine';
 import {
   CRAFT_SKINS,
@@ -39,12 +43,16 @@ import {
 import {
   createCheckerboardTexture,
   createDashedBeamTexture,
+  createHorizonGradientTexture,
+  createNeonGradientRibbonTexture,
   createTrenchGridTexture,
 } from './textures';
 
 // Pre-allocated scratch objects for zero-GC render loop
 const _dummy = new THREE.Object3D();
 const _color = new THREE.Color();
+const _tailColor = new THREE.Color();
+const _headColor = new THREE.Color();
 const _baseColor = new THREE.Color();
 const _hsl = { h: 0, s: 0, l: 0 };
 const _camTargetPos = new THREE.Vector3();
@@ -52,10 +60,12 @@ const _camTargetLook = new THREE.Vector3();
 const _camCurrentLook = new THREE.Vector3();
 
 const HITBOX_RADIUS = 0.30;
+const NEAR_MISS_MARGIN = 0.36;
 const PICKUP_RADIUS = 0.95;
 const MAX_TRAIL_POINTS = 320;
 const PARTICLE_POOL_SIZE = 112;
 const ENDLESS_SLAB_LEN = 264;
+const SECTOR_DISTANCE = 250;
 
 interface TrailVertex {
   z: number;
@@ -82,6 +92,7 @@ interface RuntimeObstacle {
   subBoxes?: Array<{ zMin: number; zMax: number; yMin: number; yMax: number }>;
   triggered?: boolean;
   destroyed?: boolean;
+  nearMissed?: boolean;
 }
 
 interface RuntimeCollectible {
@@ -123,6 +134,10 @@ export class ZigzagEngine {
   private callbacks: EngineCallbacks;
   private isSoftwareGl: boolean;
   private renderer: THREE.WebGLRenderer;
+  private composer: EffectComposer | null = null;
+  private bloomPass: UnrealBloomPass | null = null;
+  private bloomEnabled: boolean = true;
+
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private pmremGenerator: THREE.PMREMGenerator;
@@ -132,14 +147,18 @@ export class ZigzagEngine {
   private craft: PlayerCraftHandles;
   private currentSkin: CraftSkin = CRAFT_SKINS[0];
 
-  // Environment color-shifting material references
+  // Environment color-shifting material & mesh references
   private floorMat: THREE.MeshStandardMaterial | null = null;
   private railMat: THREE.MeshStandardMaterial | null = null;
+  private wallRibbonMat: THREE.MeshBasicMaterial | null = null;
+  private wallRibbonTex: THREE.CanvasTexture | null = null;
   private towerMat: THREE.MeshStandardMaterial | null = null;
   private floatMat: THREE.MeshStandardMaterial | null = null;
   private floorMesh: THREE.Mesh | null = null;
   private ceilingMesh: THREE.Mesh | null = null;
   private railMeshes: THREE.Mesh[] = [];
+  private wallRibbonMeshes: THREE.Mesh[] = [];
+  private horizonMesh: THREE.Mesh | null = null;
   private parallaxTowers: THREE.InstancedMesh | null = null;
   private parallaxFloaters: THREE.InstancedMesh | null = null;
   private baseAccentHue: number = 0.52;
@@ -148,12 +167,14 @@ export class ZigzagEngine {
   private smoothedIntensity: number = 0.15;
   private huePhase: number = 0;
 
-  // Dynamic 3D ribbon trail buffers
+  // Dynamic 3D gradient ribbon trail buffers
   private trailMeshA: THREE.Mesh;
   private trailMeshB: THREE.Mesh;
   private trailLine: THREE.Line;
   private trailPositionsA: Float32Array;
   private trailPositionsB: Float32Array;
+  private trailColorsA: Float32Array;
+  private trailColorsB: Float32Array;
   private trailLinePositions: Float32Array;
   private trailVertices: TrailVertex[] = [];
 
@@ -172,11 +193,13 @@ export class ZigzagEngine {
   private disposableGeometries: THREE.BufferGeometry[] = [];
   private disposableMaterials: THREE.Material[] = [];
 
-  // Endless streaming state
+  // Endless / Infinity streaming state
   private nextEndlessChunkIdx: number = 0;
   private nextEndlessZ: number = 36;
   private endlessGridTileUnit: number = 8;
   private endlessSpanZ: number = 288;
+  private nextSectorZ: number = SECTOR_DISTANCE;
+  private currentSector: number = 1;
   private towerInstances: Array<{ x: number; y: number; z: number; w: number; h: number }> = [];
   private floaterInstances: Array<{ x: number; y: number; z: number; s: number; rx: number; ry: number }> = [];
 
@@ -194,6 +217,10 @@ export class ZigzagEngine {
   private starsEarned: [boolean, boolean, boolean] = [false, false, false];
   private goldCombo: number = 0;
   private goldComboTimer: number = 0;
+  private streakMultiplier: number = 1.0;
+  private nearMissCount: number = 0;
+  private calloutText: string | null = null;
+  private calloutTimer: number = 0;
   private attempts: number = 1;
   private crashTimer: number = 0;
   private shakeIntensity: number = 0;
@@ -239,7 +266,7 @@ export class ZigzagEngine {
     );
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.12;
+    this.renderer.toneMappingExposure = 1.08;
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -247,6 +274,27 @@ export class ZigzagEngine {
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(52, width / height, 0.2, 260);
+
+    // Post-processing pipeline with UnrealBloomPass (GPU only per software-WebGL guard)
+    if (!this.isSoftwareGl) {
+      this.composer = new EffectComposer(this.renderer);
+      this.composer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      this.composer.setSize(width, height);
+
+      const renderPass = new RenderPass(this.scene, this.camera);
+      this.composer.addPass(renderPass);
+
+      this.bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(width, height),
+        0.65, // strength
+        0.48, // radius
+        0.58  // threshold
+      );
+      this.composer.addPass(this.bloomPass);
+
+      const outputPass = new OutputPass();
+      this.composer.addPass(outputPass);
+    }
 
     // Studio environment reflection
     this.pmremGenerator = new THREE.PMREMGenerator(this.renderer);
@@ -272,10 +320,12 @@ export class ZigzagEngine {
     this.craft = createPlayerCraft(this.currentSkin);
     this.scene.add(this.craft.group);
 
-    // 3D Ribbon Trail Setup (2 crossed ribbons + center bright line)
+    // 3D Vertex-Colored Neon Gradient Ribbon Trail
     const maxVerts = MAX_TRAIL_POINTS * 2;
     this.trailPositionsA = new Float32Array(maxVerts * 3);
     this.trailPositionsB = new Float32Array(maxVerts * 3);
+    this.trailColorsA = new Float32Array(maxVerts * 3);
+    this.trailColorsB = new Float32Array(maxVerts * 3);
     this.trailLinePositions = new Float32Array(MAX_TRAIL_POINTS * 3);
 
     const indices: number[] = [];
@@ -289,18 +339,20 @@ export class ZigzagEngine {
 
     const trailGeoA = new THREE.BufferGeometry();
     trailGeoA.setAttribute('position', new THREE.BufferAttribute(this.trailPositionsA, 3));
+    trailGeoA.setAttribute('color', new THREE.BufferAttribute(this.trailColorsA, 3));
     trailGeoA.setIndex(indices);
     trailGeoA.setDrawRange(0, 0);
 
     const trailGeoB = new THREE.BufferGeometry();
     trailGeoB.setAttribute('position', new THREE.BufferAttribute(this.trailPositionsB, 3));
+    trailGeoB.setAttribute('color', new THREE.BufferAttribute(this.trailColorsB, 3));
     trailGeoB.setIndex(indices);
     trailGeoB.setDrawRange(0, 0);
 
     const trailMat = new THREE.MeshBasicMaterial({
-      color: this.currentSkin.trailColor,
+      vertexColors: true,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.84,
       side: THREE.DoubleSide,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -377,12 +429,20 @@ export class ZigzagEngine {
     if (this.disposed) return;
     const width = Math.max(1, this.container.clientWidth);
     const height = Math.max(1, this.container.clientHeight);
+    const pr = this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(
-      this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2)
-    );
+    this.renderer.setPixelRatio(pr);
+
+    if (this.composer) {
+      this.composer.setPixelRatio(pr);
+      this.composer.setSize(width, height);
+    }
+    if (this.bloomPass) {
+      this.bloomPass.resolution.set(width, height);
+    }
   };
 
   private handleContextLost = (e: Event): void => {
@@ -402,16 +462,26 @@ export class ZigzagEngine {
     }
   }
 
+  public setBloomEnabled(enabled: boolean): void {
+    this.bloomEnabled = enabled;
+    if (this.bloomPass) {
+      this.bloomPass.enabled = enabled;
+    }
+  }
+
+  public isBloomEnabled(): boolean {
+    return this.bloomEnabled;
+  }
+
   public setSkin(skin: CraftSkin): void {
     this.currentSkin = skin;
     this.craft.setSkin(skin);
-    const mat = this.trailMeshA.material as THREE.MeshBasicMaterial;
-    mat.color.setHex(skin.trailColor);
     this.powerActiveRemaining = 0;
     this.shieldActive = false;
     this.craft.shieldMesh.visible = false;
     this.craft.auraRing.visible = false;
     this.craft.laserBeam.visible = false;
+    this.updateTrailGeometry();
     this.emitHud(true);
   }
 
@@ -428,6 +498,11 @@ export class ZigzagEngine {
     return this.cameraMode;
   }
 
+  private pushCallout(text: string): void {
+    this.calloutText = text;
+    this.calloutTimer = 1.65;
+  }
+
   public activateSpecialPower(): boolean {
     if (this.paused || this.phase !== 'playing') return false;
     if (this.powerCharge < 100 || this.powerActiveRemaining > 0) return false;
@@ -439,6 +514,7 @@ export class ZigzagEngine {
     soundEngine.playSpecialPower(this.currentSkin.powerType);
     this.spawnBurst(0, this.playerY, this.playerZ, 18, this.currentSkin.coreColor, 10);
     this.shakeIntensity = Math.max(this.shakeIntensity, 0.22);
+    this.pushCallout(`${this.currentSkin.powerName} Activated`);
     this.emitHud(true);
     return true;
   }
@@ -460,7 +536,12 @@ export class ZigzagEngine {
 
     if (this.phase === 'crashed') {
       if (holding && this.crashTimer >= 0.25) {
-        this.respawnAtCheckpoint(this.gameMode === 'hardcore' || this.gameMode === 'endless');
+        this.attempts += 1;
+        if (this.gameMode === 'endless') {
+          this.loadLevel(this.currentLevel, 'endless', true);
+        } else {
+          this.respawnAtCheckpoint(this.gameMode === 'hardcore');
+        }
         this.phase = 'playing';
         this.isHolding = true;
         this.railState = 'free';
@@ -486,7 +567,8 @@ export class ZigzagEngine {
 
   public restartFull(): void {
     if (this.gameMode === 'endless') {
-      this.loadLevel(this.currentLevel, 'endless');
+      this.attempts += 1;
+      this.loadLevel(this.currentLevel, 'endless', true);
       return;
     }
 
@@ -495,6 +577,11 @@ export class ZigzagEngine {
     this.score = 0;
     this.starsEarned = [false, false, false];
     this.goldCombo = 0;
+    this.goldComboTimer = 0;
+    this.streakMultiplier = 1.0;
+    this.nearMissCount = 0;
+    this.calloutText = null;
+    this.calloutTimer = 0;
     this.activeSpeedMultiplier = 1.0;
 
     for (const item of this.runtimeCollectibles) {
@@ -504,6 +591,7 @@ export class ZigzagEngine {
     for (const obs of this.runtimeObstacles) {
       obs.triggered = false;
       obs.destroyed = false;
+      obs.nearMissed = false;
       obs.group.visible = true;
     }
     for (const cp of this.runtimeCheckpoints) {
@@ -527,7 +615,6 @@ export class ZigzagEngine {
     this.shakeIntensity = 0;
     this.crashTimer = 0;
 
-    // Reset power state on respawn
     this.powerCharge = 100;
     this.powerActiveRemaining = 0;
     this.shieldActive = false;
@@ -557,7 +644,11 @@ export class ZigzagEngine {
     this.emitHud(true);
   }
 
-  public loadLevel(level: LevelDefinition, mode: GameMode = this.gameMode): void {
+  public loadLevel(
+    level: LevelDefinition,
+    mode: GameMode = this.gameMode,
+    preserveAttempts = false
+  ): void {
     this.currentLevel = level;
     this.gameMode = mode;
     this.clearLevelGroup();
@@ -576,10 +667,13 @@ export class ZigzagEngine {
     this.scene.fog = new THREE.FogExp2(theme.fogHex, 0.0115);
 
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
-    const gridTex = createTrenchGridTexture(theme.trenchGlowHex, maxAniso);
+    const gridTex = createTrenchGridTexture(theme.trenchGlowHex, theme.hazardHex, maxAniso);
+    const ribbonTex = createNeonGradientRibbonTexture(theme.accentHex, theme.hazardHex, maxAniso);
+    const horizonTex = createHorizonGradientTexture(theme.accentHex, theme.hazardHex);
     const checkerTex = createCheckerboardTexture(maxAniso);
     const beamTex = createDashedBeamTexture(theme.accentHex);
-    this.disposableTextures.push(gridTex, checkerTex, beamTex);
+    this.wallRibbonTex = ribbonTex;
+    this.disposableTextures.push(gridTex, ribbonTex, horizonTex, checkerTex, beamTex);
 
     const isEndless = mode === 'endless';
     const trackStartZ = -24;
@@ -587,7 +681,7 @@ export class ZigzagEngine {
     const trackLen = trackEndZ - trackStartZ;
     const trackCenterZ = (trackStartZ + trackEndZ) * 0.5;
 
-    // Floor & Ceiling cyber-trench slabs
+    // Floor & Ceiling cyber-trench slabs with neon gradient grid
     gridTex.repeat.set(2, trackLen / 8);
     this.endlessGridTileUnit = 8;
     this.endlessSpanZ = trackLen;
@@ -596,11 +690,11 @@ export class ZigzagEngine {
 
     this.floorMat = new THREE.MeshStandardMaterial({
       map: gridTex,
-      roughness: 0.35,
+      roughness: 0.32,
       metalness: 0.65,
       emissive: theme.trenchGlowHex,
       emissiveMap: gridTex,
-      emissiveIntensity: 0.38,
+      emissiveIntensity: 0.52,
     });
     this.disposableMaterials.push(this.floorMat);
 
@@ -619,7 +713,7 @@ export class ZigzagEngine {
     this.railMat = new THREE.MeshStandardMaterial({
       color: theme.accentHex,
       emissive: theme.accentHex,
-      emissiveIntensity: 1.5,
+      emissiveIntensity: 1.7,
       roughness: 0.2,
       metalness: 0.5,
     });
@@ -636,6 +730,48 @@ export class ZigzagEngine {
       }
     }
 
+    // Flowing Neon Gradient Energy Wall Ribbons along outer trench curbs
+    ribbonTex.repeat.set(trackLen / 24, 1);
+    const wallRibbonGeo = new THREE.PlaneGeometry(trackLen, 1.45);
+    wallRibbonGeo.rotateY(Math.PI / 2);
+    this.wallRibbonMat = new THREE.MeshBasicMaterial({
+      map: ribbonTex,
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.disposableGeometries.push(wallRibbonGeo);
+    this.disposableMaterials.push(this.wallRibbonMat);
+
+    this.wallRibbonMeshes = [];
+    for (const x of [-4.32, 4.32]) {
+      for (const y of [TRACK_FLOOR_Y + 0.75, TRACK_CEILING_Y - 0.75]) {
+        const wallRibbon = new THREE.Mesh(wallRibbonGeo, this.wallRibbonMat);
+        wallRibbon.position.set(x, y, trackCenterZ);
+        this.levelGroup.add(wallRibbon);
+        this.wallRibbonMeshes.push(wallRibbon);
+      }
+    }
+
+    // Distant Neon Gradient Horizon Backdrop
+    const horizonGeo = new THREE.PlaneGeometry(110, 56);
+    const horizonMat = new THREE.MeshBasicMaterial({
+      map: horizonTex,
+      transparent: true,
+      opacity: 0.68,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.disposableGeometries.push(horizonGeo);
+    this.disposableMaterials.push(horizonMat);
+    this.horizonMesh = new THREE.Mesh(horizonGeo, horizonMat);
+    this.horizonMesh.position.set(8, 6, 150);
+    this.horizonMesh.rotation.y = -0.35;
+    this.levelGroup.add(this.horizonMesh);
+
     // Parallax Cyber-Canyon Architecture
     this.buildParallaxCanyon(trackStartZ, trackEndZ, theme.accentHex, theme.hazardHex);
 
@@ -647,17 +783,16 @@ export class ZigzagEngine {
     if (isEndless) {
       this.nextEndlessChunkIdx = 0;
       this.nextEndlessZ = 34;
+      this.nextSectorZ = SECTOR_DISTANCE;
+      this.currentSector = 1;
       this.streamEndlessChunks(0);
     } else {
-      // Build Fixed Course Obstacles
       for (const obs of level.obstacles) {
         this.addObstacleToScene(obs, theme.accentHex, theme.hazardHex);
       }
-      // Build Fixed Collectibles
       for (const item of level.collectibles) {
         this.addCollectibleToScene(item);
       }
-      // Build Checkpoints (disabled in hardcore mode!)
       if (mode !== 'hardcore') {
         for (const cp of level.checkpoints) {
           const marker = createCheckpointMarker(cp.z, beamTex, theme.accentHex);
@@ -671,17 +806,23 @@ export class ZigzagEngine {
           });
         }
       }
-      // Build Finish Portal
       const portal = createFinishPortal(level.length, checkerTex, theme.accentHex);
       this.levelGroup.add(portal.group);
       this.finishPortalRing = portal.ring;
     }
 
-    this.attempts = 1;
+    if (!preserveAttempts) {
+      this.attempts = 1;
+    }
     this.score = 0;
     this.starsEarned = [false, false, false];
     this.lastCheckpoint = null;
     this.goldCombo = 0;
+    this.goldComboTimer = 0;
+    this.streakMultiplier = 1.0;
+    this.nearMissCount = 0;
+    this.calloutText = null;
+    this.calloutTimer = 0;
     this.respawnAtCheckpoint(true);
   }
 
@@ -709,6 +850,7 @@ export class ZigzagEngine {
       subBoxes,
       triggered: false,
       destroyed: false,
+      nearMissed: false,
     });
   }
 
@@ -752,7 +894,6 @@ export class ZigzagEngine {
       this.nextEndlessZ += ENDLESS_CHUNK_LENGTH;
     }
 
-    // Recycle objects well behind the camera
     const cullZ = currentZ - 42;
     this.runtimeObstacles = this.runtimeObstacles.filter((obs) => {
       const obsEnd = obs.data.type === 'spikes' ? obs.data.zEnd : obs.data.z + 6;
@@ -785,7 +926,7 @@ export class ZigzagEngine {
       metalness: 0.8,
       roughness: 0.35,
       emissive: accentHex,
-      emissiveIntensity: 0.16,
+      emissiveIntensity: 0.22,
     });
     this.disposableGeometries.push(towerGeo);
     this.disposableMaterials.push(this.towerMat);
@@ -817,7 +958,7 @@ export class ZigzagEngine {
     this.floatMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       emissive: hazardHex,
-      emissiveIntensity: 0.55,
+      emissiveIntensity: 0.68,
       metalness: 0.7,
       roughness: 0.25,
     });
@@ -882,11 +1023,15 @@ export class ZigzagEngine {
     this.disposableMaterials = [];
     this.floorMat = null;
     this.railMat = null;
+    this.wallRibbonMat = null;
+    this.wallRibbonTex = null;
     this.towerMat = null;
     this.floatMat = null;
     this.floorMesh = null;
     this.ceilingMesh = null;
     this.railMeshes = [];
+    this.wallRibbonMeshes = [];
+    this.horizonMesh = null;
     this.parallaxTowers = null;
     this.parallaxFloaters = null;
   }
@@ -896,45 +1041,55 @@ export class ZigzagEngine {
     const speedExcess = Math.max(0, this.activeSpeedMultiplier - 1.0);
     const speedFactor = this.activeSpeedMultiplier;
 
-    // Continuous subtle hue drift accelerated by speed multiplier + reactive intensity shift
-    this.huePhase = (this.huePhase + dt * (0.04 + speedExcess * 0.28)) % 1.0;
+    this.huePhase = (this.huePhase + dt * (0.045 + speedExcess * 0.3)) % 1.0;
+    const sectorHueShift = this.gameMode === 'endless' ? (this.currentSector - 1) * 0.14 : 0;
     const reactiveHueShift =
-      (this.huePhase * 0.22 + speedExcess * 0.45 + this.smoothedIntensity * 0.08) % 1.0;
+      (this.huePhase * 0.24 + speedExcess * 0.45 + this.smoothedIntensity * 0.08 + sectorHueShift) % 1.0;
 
     const gridHue = (this.baseAccentHue + reactiveHueShift) % 1.0;
-    const prismHue = (this.baseAccentHue + reactiveHueShift + 0.08) % 1.0;
+    const prismHue = (this.baseAccentHue + reactiveHueShift + 0.1) % 1.0;
     const towerHue = (this.baseHazardHue + reactiveHueShift * 0.7) % 1.0;
 
     if (this.floorMat) {
       this.floorMat.emissive.setHSL(
         gridHue,
-        0.9,
-        0.48 + this.smoothedIntensity * 0.14
+        0.92,
+        0.5 + this.smoothedIntensity * 0.14
       );
       this.floorMat.emissiveIntensity =
-        0.3 + this.smoothedIntensity * 0.65 + speedExcess * 0.45;
+        0.4 + this.smoothedIntensity * 0.7 + speedExcess * 0.5;
     }
 
     if (this.railMat) {
-      const l = 0.52 + this.smoothedIntensity * 0.16;
-      this.railMat.color.setHSL(prismHue, 0.95, l);
-      this.railMat.emissive.setHSL(prismHue, 0.95, l);
+      const l = 0.54 + this.smoothedIntensity * 0.16;
+      this.railMat.color.setHSL(prismHue, 0.96, l);
+      this.railMat.emissive.setHSL(prismHue, 0.96, l);
       this.railMat.emissiveIntensity =
-        1.25 + this.smoothedIntensity * 1.45 + speedExcess * 0.9;
+        1.45 + this.smoothedIntensity * 1.55 + speedExcess * 0.95;
+    }
+
+    if (this.wallRibbonTex && this.wallRibbonMat) {
+      this.wallRibbonTex.offset.x = (this.wallRibbonTex.offset.x + dt * (0.12 + speedExcess * 0.25)) % 1;
+      this.wallRibbonMat.opacity = 0.55 + this.smoothedIntensity * 0.38;
     }
 
     if (this.towerMat) {
-      this.towerMat.emissive.setHSL(gridHue, 0.85, 0.45);
-      this.towerMat.emissiveIntensity = 0.12 + this.smoothedIntensity * 0.28;
+      this.towerMat.emissive.setHSL(gridHue, 0.88, 0.48);
+      this.towerMat.emissiveIntensity = 0.18 + this.smoothedIntensity * 0.34;
     }
 
     if (this.floatMat) {
-      this.floatMat.emissive.setHSL(towerHue, 0.9, 0.52);
+      this.floatMat.emissive.setHSL(towerHue, 0.92, 0.54);
       this.floatMat.emissiveIntensity =
-        0.45 + this.smoothedIntensity * 0.85 + (speedFactor > 1.2 ? 0.35 : 0);
+        0.55 + this.smoothedIntensity * 0.95 + (speedFactor > 1.2 ? 0.38 : 0);
     }
 
-    // Subtle atmospheric fog tint shift during overdrive or chrono slow
+    if (this.bloomPass && this.bloomEnabled) {
+      const powerBoost = this.powerActiveRemaining > 0 ? 0.2 : 0;
+      const targetBloom = 0.58 + this.smoothedIntensity * 0.32 + speedExcess * 0.35 + powerBoost;
+      this.bloomPass.strength = THREE.MathUtils.damp(this.bloomPass.strength, targetBloom, 8, dt);
+    }
+
     if (this.scene.fog && this.scene.background instanceof THREE.Color) {
       this.baseFogColor.getHSL(_hsl);
       const targetHue =
@@ -1027,13 +1182,20 @@ export class ZigzagEngine {
     }
 
     const totalPts = Math.min(ptsCount + 1, MAX_TRAIL_POINTS);
-    const halfW = 0.22;
-    const halfH = 0.14;
+    const halfW = 0.24;
+    const halfH = 0.15;
+
+    // Gradient endpoints: tail shifts hue from skin trailColor toward magenta/violet, head glows bright coreColor
+    _headColor.setHex(this.currentSkin.coreColor);
+    _tailColor.setHex(this.currentSkin.trailColor).getHSL(_hsl);
+    _tailColor.setHSL((_hsl.h + 0.26) % 1.0, 0.95, 0.55);
 
     for (let i = 0; i < totalPts; i++) {
       const pt = i < ptsCount ? this.trailVertices[i] : { z: this.playerZ, y: this.playerY };
-      const idx = i * 6;
+      const t = totalPts <= 1 ? 1 : i / (totalPts - 1);
+      _color.copy(_tailColor).lerp(_headColor, t);
 
+      const idx = i * 6;
       this.trailPositionsA[idx] = -halfW;
       this.trailPositionsA[idx + 1] = pt.y;
       this.trailPositionsA[idx + 2] = pt.z;
@@ -1050,6 +1212,21 @@ export class ZigzagEngine {
       this.trailPositionsB[idx + 4] = pt.y + halfH;
       this.trailPositionsB[idx + 5] = pt.z;
 
+      // Write vertex gradient colors for both sides of each ribbon vertex
+      this.trailColorsA[idx] = _color.r;
+      this.trailColorsA[idx + 1] = _color.g;
+      this.trailColorsA[idx + 2] = _color.b;
+      this.trailColorsA[idx + 3] = _color.r;
+      this.trailColorsA[idx + 4] = _color.g;
+      this.trailColorsA[idx + 5] = _color.b;
+
+      this.trailColorsB[idx] = _color.r;
+      this.trailColorsB[idx + 1] = _color.g;
+      this.trailColorsB[idx + 2] = _color.b;
+      this.trailColorsB[idx + 3] = _color.r;
+      this.trailColorsB[idx + 4] = _color.g;
+      this.trailColorsB[idx + 5] = _color.b;
+
       const lIdx = i * 3;
       this.trailLinePositions[lIdx] = 0;
       this.trailLinePositions[lIdx + 1] = pt.y;
@@ -1058,9 +1235,11 @@ export class ZigzagEngine {
 
     const drawIndices = Math.max(0, (totalPts - 1) * 6);
     this.trailMeshA.geometry.attributes.position.needsUpdate = true;
+    this.trailMeshA.geometry.attributes.color.needsUpdate = true;
     this.trailMeshA.geometry.setDrawRange(0, drawIndices);
 
     this.trailMeshB.geometry.attributes.position.needsUpdate = true;
+    this.trailMeshB.geometry.attributes.color.needsUpdate = true;
     this.trailMeshB.geometry.setDrawRange(0, drawIndices);
 
     this.trailLine.geometry.attributes.position.needsUpdate = true;
@@ -1070,44 +1249,82 @@ export class ZigzagEngine {
   private checkHazardCollision(z: number, y: number): RuntimeObstacle | null {
     const r = HITBOX_RADIUS;
     const rSq = r * r;
+    const nmR = r + NEAR_MISS_MARGIN;
+    const nmRSq = nmR * nmR;
 
     for (const obs of this.runtimeObstacles) {
       if (obs.destroyed) continue;
       const data = obs.data;
       if (data.type === 'saw') {
-        if (Math.abs(z - data.z) > data.radius + r) continue;
+        if (Math.abs(z - data.z) > data.radius + nmR) continue;
         const dz = z - data.z;
         const dy = y - data.y;
+        const distSq = dz * dz + dy * dy;
         const effR = data.radius * 0.78 + r;
-        if (dz * dz + dy * dy < effR * effR) return obs;
+        if (distSq < effR * effR) return obs;
+
+        const nearR = data.radius * 0.78 + nmR;
+        if (!obs.nearMissed && distSq < nearR * nearR) {
+          obs.nearMissed = true;
+          this.awardNearMiss();
+        }
       } else if (data.type === 'starMine') {
-        if (Math.abs(z - data.z) > data.radius + r) continue;
+        if (Math.abs(z - data.z) > data.radius + nmR) continue;
         const dz = z - data.z;
         const dy = y - data.y;
+        const distSq = dz * dz + dy * dy;
         const effR = data.radius * 0.68 + r;
-        if (dz * dz + dy * dy < effR * effR) return obs;
+        if (distSq < effR * effR) return obs;
+
+        const nearR = data.radius * 0.68 + nmR;
+        if (!obs.nearMissed && distSq < nearR * nearR) {
+          obs.nearMissed = true;
+          this.awardNearMiss();
+        }
       } else if (data.type === 'block' && obs.subBoxes) {
-        if (Math.abs(z - data.z) > data.width * 0.6 + r) continue;
+        if (Math.abs(z - data.z) > data.width * 0.6 + nmR) continue;
         for (const b of obs.subBoxes) {
           const inset = 0.06;
           const cz = THREE.MathUtils.clamp(z, b.zMin + inset, b.zMax - inset);
           const cy = THREE.MathUtils.clamp(y, b.yMin + inset, b.yMax - inset);
           const dz = z - cz;
           const dy = y - cy;
-          if (dz * dz + dy * dy < rSq) return obs;
+          const distSq = dz * dz + dy * dy;
+          if (distSq < rSq) return obs;
+          if (!obs.nearMissed && distSq < nmRSq) {
+            obs.nearMissed = true;
+            this.awardNearMiss();
+          }
         }
       } else if (data.type === 'spikes') {
         if (z < data.zStart - r * 0.5 || z > data.zEnd + r * 0.5) continue;
         const forgivingH = data.height * 0.78;
         if (data.placement === 'floor') {
           if (y - r < forgivingH) return obs;
+          if (!obs.nearMissed && y - nmR < forgivingH) {
+            obs.nearMissed = true;
+            this.awardNearMiss();
+          }
         } else {
           if (y + r > TRACK_CEILING_Y - forgivingH) return obs;
+          if (!obs.nearMissed && y + nmR > TRACK_CEILING_Y - forgivingH) {
+            obs.nearMissed = true;
+            this.awardNearMiss();
+          }
         }
       }
     }
 
     return null;
+  }
+
+  private awardNearMiss(): void {
+    this.nearMissCount += 1;
+    const bonus = Math.round(50 * this.streakMultiplier);
+    this.score += bonus;
+    this.powerCharge = Math.min(100, this.powerCharge + 8);
+    this.pushCallout(`Near Miss +${bonus}`);
+    this.spawnBurst(0, this.playerY, this.playerZ, 6, 0x38bdf8, 5);
   }
 
   private updateSpecialPowerState(dt: number): void {
@@ -1119,7 +1336,6 @@ export class ZigzagEngine {
         this.shieldActive = false;
       }
     } else {
-      // Passive recharge during gameplay
       this.powerCharge = Math.min(100, this.powerCharge + dt * 7.0);
     }
 
@@ -1144,7 +1360,6 @@ export class ZigzagEngine {
       this.craft.auraRing.scale.setScalar(s);
     }
 
-    // Laser Breaker destroys hazards directly in front of the craft
     if (isPowerActive && power === 'breaker') {
       const beamEndZ = this.playerZ + 13.0;
       for (const obs of this.runtimeObstacles) {
@@ -1184,10 +1399,11 @@ export class ZigzagEngine {
     const modeBaseMult = this.gameMode === 'hardcore' ? 1.15 : 1.0;
     const slowMoFactor = isPowerActive && power === 'slowmo' ? 0.62 : 1.0;
     const endlessRamp =
-      this.gameMode === 'endless' ? Math.min(0.4, this.playerZ / 1600) : 0;
+      this.gameMode === 'endless' ? Math.min(0.45, this.playerZ / 1500) : 0;
     const scoreMult =
       (this.gameMode === 'hardcore' ? 2.0 : 1.0) *
-      (isPowerActive && power === 'overdrive' ? 2.5 : 1.0);
+      (isPowerActive && power === 'overdrive' ? 2.5 : 1.0) *
+      this.streakMultiplier;
 
     const climbInput = this.gameMode === 'inverted' ? !this.isHolding : this.isHolding;
 
@@ -1225,6 +1441,19 @@ export class ZigzagEngine {
 
       this.playerY = nextY;
 
+      // Infinity Sector Milestones every 250m
+      if (this.gameMode === 'endless' && this.playerZ >= this.nextSectorZ) {
+        this.currentSector += 1;
+        this.nextSectorZ += SECTOR_DISTANCE;
+        const sectorBonus = 500 * (this.currentSector - 1);
+        this.score += sectorBonus;
+        this.powerCharge = Math.min(100, this.powerCharge + 45);
+        soundEngine.playCheckpoint();
+        this.spawnBurst(0, this.playerY, this.playerZ, 26, 0x22d3ee, 11);
+        this.pushCallout(`Sector 0${this.currentSector} · +${sectorBonus}`);
+        this.emitHud(true);
+      }
+
       // Speed gates
       for (const obs of this.runtimeObstacles) {
         if (obs.data.type === 'speedGate' && !obs.triggered && this.playerZ >= obs.data.z) {
@@ -1237,7 +1466,7 @@ export class ZigzagEngine {
         }
       }
 
-      // Checkpoints (Classic & Inverted modes)
+      // Checkpoints
       for (const cp of this.runtimeCheckpoints) {
         if (!cp.reached && this.playerZ >= cp.data.z) {
           cp.reached = true;
@@ -1245,10 +1474,11 @@ export class ZigzagEngine {
           this.lastCheckpoint = cp.data;
           soundEngine.playCheckpoint();
           this.spawnBurst(0, this.playerY, cp.data.z, 10, 0x34d399, 6);
+          this.pushCallout('Checkpoint Reached');
         }
       }
 
-      // Collectibles (with Magnet Surge / Overdrive magnetic pull)
+      // Collectibles & Streak Multiplier
       const hasMagnet = isPowerActive && (power === 'magnet' || power === 'overdrive');
       const magnetRange = power === 'magnet' ? 7.5 : 5.5;
       const pSq = PICKUP_RADIUS * PICKUP_RADIUS;
@@ -1274,11 +1504,13 @@ export class ZigzagEngine {
           item.collected = true;
           item.group.visible = false;
           this.score += Math.round(item.data.value * scoreMult);
+
           if (item.data.type === 'gold') {
             this.powerCharge = Math.min(100, this.powerCharge + 14);
             soundEngine.playCollectGold(this.goldCombo);
             this.goldCombo += 1;
-            this.goldComboTimer = 0.75;
+            this.goldComboTimer = 1.85;
+            this.streakMultiplier = Math.min(3.0, 1.0 + Math.floor(this.goldCombo / 5) * 0.25);
             this.spawnBurst(0, item.data.y, item.data.z, 7, 0xfacc15, 6.5);
           } else {
             this.powerCharge = Math.min(100, this.powerCharge + 35);
@@ -1287,19 +1519,19 @@ export class ZigzagEngine {
             }
             soundEngine.playCollectStar();
             this.spawnBurst(0, item.data.y, item.data.z, 16, 0xfef08a, 9);
+            this.pushCallout('Sector Star Collected');
           }
           this.emitHud(true);
         }
       }
 
-      // Hazards (skipped if Phase Blink or temporary shield post-hit invuln is active)
+      // Hazards
       const isIntangible =
         (isPowerActive && power === 'phase') || this.invulnTimer > 0;
       if (!isIntangible) {
         const hitObs = this.checkHazardCollision(this.playerZ, this.playerY);
         if (hitObs) {
           if (this.shieldActive) {
-            // Consume Phase Shield & absorb impact!
             this.shieldActive = false;
             this.powerActiveRemaining = 0;
             this.invulnTimer = 1.15;
@@ -1310,6 +1542,7 @@ export class ZigzagEngine {
             }
             this.spawnBurst(0, this.playerY, this.playerZ, 26, 0x22d3ee, 11);
             soundEngine.playShieldPop();
+            this.pushCallout('Shield Absorbed Hit');
             this.emitHud(true);
           } else {
             this.triggerCrash();
@@ -1318,11 +1551,14 @@ export class ZigzagEngine {
         }
       }
 
-      // Finish portal (non-endless modes)
       if (this.gameMode !== 'endless' && this.playerZ >= this.currentLevel.length) {
         this.triggerComplete();
         return;
       }
+    }
+
+    if (this.horizonMesh) {
+      this.horizonMesh.position.z = this.playerZ + 165;
     }
 
     // Stream & keep endless trench aligned to playerZ
@@ -1334,6 +1570,9 @@ export class ZigzagEngine {
       if (this.ceilingMesh) this.ceilingMesh.position.z = slabCenterZ;
       for (const rail of this.railMeshes) {
         rail.position.z = slabCenterZ;
+      }
+      for (const wallRibbon of this.wallRibbonMeshes) {
+        wallRibbon.position.z = slabCenterZ;
       }
 
       if (this.parallaxTowers) {
@@ -1495,7 +1734,11 @@ export class ZigzagEngine {
       mode: this.gameMode,
       percent,
       distance: Math.floor(this.playerZ),
+      sector: this.currentSector,
       score: this.score,
+      streakMultiplier: this.streakMultiplier,
+      nearMissCount: this.nearMissCount,
+      calloutText: this.calloutTimer > 0 ? this.calloutText : null,
       stars: [...this.starsEarned] as [boolean, boolean, boolean],
       attempts: this.attempts,
       activeSpeedMultiplier: this.activeSpeedMultiplier,
@@ -1529,12 +1772,21 @@ export class ZigzagEngine {
 
       if (this.goldComboTimer > 0) {
         this.goldComboTimer -= dt;
-        if (this.goldComboTimer <= 0) this.goldCombo = 0;
+        if (this.goldComboTimer <= 0) {
+          this.goldCombo = 0;
+          this.streakMultiplier = 1.0;
+        }
       }
 
-      // Step synthesized synthwave pulse & update reactive grid/prism colors
+      if (this.calloutTimer > 0) {
+        this.calloutTimer -= dt;
+        if (this.calloutTimer <= 0) {
+          this.calloutText = null;
+        }
+      }
+
       const endlessBoost =
-        this.gameMode === 'endless' ? Math.min(0.4, this.playerZ / 1600) : 0;
+        this.gameMode === 'endless' ? Math.min(0.45, this.playerZ / 1500) : 0;
       const effectiveSpeed =
         this.activeSpeedMultiplier + endlessBoost + (this.gameMode === 'hardcore' ? 0.15 : 0);
       this.currentMusicIntensity = soundEngine.stepMusicPulse(
@@ -1571,7 +1823,7 @@ export class ZigzagEngine {
         if (this.crashTimer >= 0.72) {
           this.attempts += 1;
           if (this.gameMode === 'endless') {
-            this.loadLevel(this.currentLevel, 'endless');
+            this.loadLevel(this.currentLevel, 'endless', true);
           } else {
             this.respawnAtCheckpoint(this.gameMode === 'hardcore');
           }
@@ -1583,7 +1835,11 @@ export class ZigzagEngine {
       this.updateCamera(dt);
     }
 
-    this.renderer.render(this.scene, this.camera);
+    if (this.isSoftwareGl || !this.composer || !this.bloomEnabled) {
+      this.renderer.render(this.scene, this.camera);
+    } else {
+      this.composer.render();
+    }
     this.scheduleNextFrame();
   };
 
@@ -1636,6 +1892,8 @@ export class ZigzagEngine {
     this.particleMesh.geometry.dispose();
     (this.particleMesh.material as THREE.Material).dispose();
 
+    this.bloomPass?.dispose();
+    this.composer?.dispose();
     this.envRenderTarget.dispose();
     this.pmremGenerator.dispose();
     this.renderer.dispose();

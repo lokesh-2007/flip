@@ -54,8 +54,8 @@ const MODES: Array<{
   },
   {
     id: 'endless',
-    label: 'Endless',
-    detail: 'Infinite procedural trench',
+    label: 'Infinity',
+    detail: '250m Sectors · Escalating speed',
     icon: <InfinityIcon className="h-3.5 w-3.5" />,
   },
 ];
@@ -118,7 +118,7 @@ export const LevelSelectModal: React.FC<LevelSelectModalProps> = ({
             </h2>
             {currentMode === 'endless' && (
               <span className="font-mono-num text-xs text-cyan-300">
-                Endless Best: {endlessBest}m
+                Infinity Best: {endlessBest}m
               </span>
             )}
           </div>
@@ -152,27 +152,28 @@ export const LevelSelectModal: React.FC<LevelSelectModalProps> = ({
           </div>
         </div>
 
-        {/* 5 Handcrafted Courses (or Endless Launch Banner) */}
+        {/* 5 Handcrafted Courses (or Infinity Mode Launch Banner) */}
         <div className="mt-6">
           <h2 className="font-display text-sm font-bold text-slate-200">
-            {currentMode === 'endless' ? 'Endless Trench' : 'Courses'}
+            {currentMode === 'endless' ? 'Infinity Mode' : 'Courses'}
           </h2>
 
           {currentMode === 'endless' ? (
             <button
               type="button"
               onClick={() => onSelectMode('endless')}
-              className="mt-2.5 flex w-full items-center justify-between rounded-xl border border-cyan-400/50 bg-cyan-950/30 p-4 text-left transition-colors hover:bg-cyan-950/45"
+              className="mt-2.5 flex w-full items-center justify-between rounded-xl border border-fuchsia-400/50 bg-gradient-to-r from-cyan-950/40 via-indigo-950/40 to-fuchsia-950/40 p-4 text-left transition-colors hover:border-cyan-300/70"
             >
               <div>
                 <div className="font-display text-lg font-bold text-white">
-                  Launch Infinite Cyber-Trench
+                  Launch Infinity Mode
                 </div>
                 <p className="mt-0.5 text-xs text-slate-300">
-                  Procedural patterns stream continuously with escalating speed and dynamic color shifts. Best distance: <span className="font-mono-num text-cyan-300 font-semibold">{endlessBest}m</span>
+                  Infinite procedural cyber-trench with 250m Sector Milestones, near-miss adrenaline bonuses, and reactive neon gradients. Best distance:{' '}
+                  <span className="font-mono-num text-cyan-300 font-semibold">{endlessBest}m</span>
                 </p>
               </div>
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-cyan-400 text-slate-950">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-r from-cyan-400 to-fuchsia-400 text-slate-950">
                 <Play className="h-4 w-4 fill-current" />
               </span>
             </button>
