@@ -1,11 +1,12 @@
 import React from 'react';
 import { ArrowRight, Gift, LayoutGrid, RotateCcw, Star, Trophy } from 'lucide-react';
 import { CRAFT_SKINS } from '../levels/levelData';
-import { HudSnapshot, LevelDefinition } from '../types/game';
+import { GameMode, HudSnapshot, LevelDefinition } from '../types/game';
 import { formatScore } from '../utils/formatters';
 
 interface LevelCompleteModalProps {
   level: LevelDefinition;
+  mode: GameMode;
   hud: HudSnapshot;
   totalGold: number;
   hasNextLevel: boolean;
@@ -14,8 +15,16 @@ interface LevelCompleteModalProps {
   onOpenLevels: () => void;
 }
 
+const MODE_LABELS: Record<GameMode, string> = {
+  classic: 'Arcade',
+  inverted: 'Gravity Flip',
+  hardcore: 'Hardcore',
+  endless: 'Endless',
+};
+
 export const LevelCompleteModal: React.FC<LevelCompleteModalProps> = ({
   level,
+  mode,
   hud,
   totalGold,
   hasNextLevel,
@@ -59,7 +68,7 @@ export const LevelCompleteModal: React.FC<LevelCompleteModalProps> = ({
           Level Completed!
         </h2>
         <p className="mt-1 text-sm text-slate-400">
-          Course 0{level.number} · {level.name} ·{' '}
+          Course 0{level.number} · {level.name} · {MODE_LABELS[mode]} ·{' '}
           <span className="font-mono-num text-cyan-300">100%</span>
         </p>
 
@@ -99,13 +108,13 @@ export const LevelCompleteModal: React.FC<LevelCompleteModalProps> = ({
           </div>
         </div>
 
-        {/* Gift / Bonus Skin Unlock Progress Bar */}
+        {/* Gift / Bonus Avatar Unlock Progress Bar */}
         <div className="mt-5 text-left">
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-300 font-medium">
               {nextLockedSkin
-                ? `Next Craft Unlock: ${nextLockedSkin.name}`
-                : 'All Craft Skins Unlocked'}
+                ? `Next Avatar Unlock: ${nextLockedSkin.name}`
+                : 'All 6 Avatars Unlocked'}
             </span>
             <span className="font-mono-num text-cyan-300 font-semibold">
               {bonusPct}%
@@ -127,7 +136,7 @@ export const LevelCompleteModal: React.FC<LevelCompleteModalProps> = ({
           <button
             type="button"
             onClick={onOpenLevels}
-            aria-label="Open Level Select"
+            aria-label="Open Hangar"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/5 text-slate-200 transition-colors hover:border-white/30 hover:text-white"
           >
             <LayoutGrid className="h-4 w-4" />
@@ -157,7 +166,7 @@ export const LevelCompleteModal: React.FC<LevelCompleteModalProps> = ({
               onClick={onOpenLevels}
               className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-amber-400 px-5 text-sm font-bold text-slate-950 transition-colors hover:bg-amber-300 whitespace-nowrap"
             >
-              <span>All Courses</span>
+              <span>Hangar</span>
             </button>
           )}
         </div>

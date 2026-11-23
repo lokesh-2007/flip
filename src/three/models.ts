@@ -9,19 +9,255 @@ import {
 
 export interface PlayerCraftHandles {
   group: THREE.Group;
+  bodyGroup: THREE.Group;
   coreMesh: THREE.Mesh;
   outerRing: THREE.Mesh;
   innerRing: THREE.Mesh;
   thrusterCone: THREE.Mesh;
+  shieldMesh: THREE.Group;
+  auraRing: THREE.Mesh;
+  laserBeam: THREE.Mesh;
   pointLight: THREE.PointLight;
   setSkin: (skin: CraftSkin) => void;
+}
+
+function buildAvatarBody(
+  skin: CraftSkin,
+  metalMat: THREE.MeshStandardMaterial,
+  coreMat: THREE.MeshStandardMaterial,
+  rimMat: THREE.MeshStandardMaterial,
+  shellMat: THREE.MeshPhysicalMaterial
+): { bodyGroup: THREE.Group; coreMesh: THREE.Mesh; outerRing: THREE.Mesh; innerRing: THREE.Mesh } {
+  const bodyGroup = new THREE.Group();
+
+  // Shared anchor placeholders for rotation animations
+  let coreMesh: THREE.Mesh;
+  let outerRing: THREE.Mesh;
+  let innerRing: THREE.Mesh;
+
+  if (skin.shape === 'dart') {
+    // Solar Dart: Swept-wing delta interceptor
+    const hullShape = new THREE.Shape();
+    hullShape.moveTo(0, 0.65);
+    hullShape.lineTo(0.24, 0.05);
+    hullShape.lineTo(0.62, -0.36);
+    hullShape.lineTo(0.18, -0.28);
+    hullShape.lineTo(0, -0.46);
+    hullShape.lineTo(-0.18, -0.28);
+    hullShape.lineTo(-0.62, -0.36);
+    hullShape.lineTo(-0.24, 0.05);
+    hullShape.closePath();
+
+    const hullGeo = new THREE.ExtrudeGeometry(hullShape, {
+      depth: 0.14,
+      bevelEnabled: true,
+      bevelThickness: 0.04,
+      bevelSize: 0.03,
+      bevelSegments: 2,
+    });
+    hullGeo.center();
+    hullGeo.rotateX(Math.PI / 2);
+
+    coreMesh = new THREE.Mesh(hullGeo, metalMat);
+    bodyGroup.add(coreMesh);
+
+    const canopyGeo = new THREE.OctahedronGeometry(0.22, 1);
+    canopyGeo.scale(0.8, 0.6, 1.8);
+    const canopy = new THREE.Mesh(canopyGeo, coreMat);
+    canopy.position.set(0, 0.12, 0.08);
+    bodyGroup.add(canopy);
+
+    const railGeo = new THREE.BoxGeometry(0.08, 0.06, 0.72);
+    const leftPod = new THREE.Mesh(railGeo, rimMat);
+    leftPod.position.set(-0.42, 0, -0.1);
+    bodyGroup.add(leftPod);
+
+    const rightPod = new THREE.Mesh(railGeo, rimMat);
+    rightPod.position.set(0.42, 0, -0.1);
+    bodyGroup.add(rightPod);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.03, 8, 24), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    outerRing.position.z = -0.18;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.025, 8, 20), coreMat);
+    innerRing.position.z = -0.32;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'prism') {
+    // Prism Star: Crystalline octahedron + 4 orbiting shards + twin halos
+    coreMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.36, 0), coreMat);
+    bodyGroup.add(coreMesh);
+
+    const shellMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.46, 0), shellMat);
+    bodyGroup.add(shellMesh);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.04, 6, 6), metalMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.03, 8, 24), rimMat);
+    innerRing.rotation.x = Math.PI / 4;
+    bodyGroup.add(innerRing);
+
+    const shardGeo = new THREE.TetrahedronGeometry(0.14, 0);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      const shard = new THREE.Mesh(shardGeo, rimMat);
+      shard.position.set(Math.cos(a) * 0.54, Math.sin(a) * 0.54, 0);
+      bodyGroup.add(shard);
+    }
+  } else if (skin.shape === 'scythe') {
+    // Apex Scythe: Twin forward-swept cyber fangs
+    coreMesh = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.62), metalMat);
+    bodyGroup.add(coreMesh);
+
+    const bladeShape = new THREE.Shape();
+    bladeShape.moveTo(0, -0.35);
+    bladeShape.lineTo(0.16, 0.15);
+    bladeShape.lineTo(0.06, 0.72);
+    bladeShape.lineTo(-0.08, 0.28);
+    bladeShape.closePath();
+
+    const bladeGeo = new THREE.ExtrudeGeometry(bladeShape, {
+      depth: 0.06,
+      bevelEnabled: true,
+      bevelThickness: 0.02,
+      bevelSize: 0.02,
+      bevelSegments: 2,
+    });
+    bladeGeo.center();
+    bladeGeo.rotateX(Math.PI / 2);
+
+    const leftBlade = new THREE.Mesh(bladeGeo, rimMat);
+    leftBlade.position.set(-0.34, 0, 0.15);
+    bodyGroup.add(leftBlade);
+
+    const rightBlade = new THREE.Mesh(bladeGeo, rimMat);
+    rightBlade.position.set(0.34, 0, 0.15);
+    rightBlade.rotation.z = Math.PI;
+    bodyGroup.add(rightBlade);
+
+    const eyeCore = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 16), coreMat);
+    eyeCore.position.set(0, 0.08, 0.22);
+    bodyGroup.add(eyeCore);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.04, 8, 24), metalMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.03, 8, 20), coreMat);
+    innerRing.rotation.x = Math.PI / 3;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'phantom') {
+    // Jade Phantom: Hexagonal stealth disc + tri-wing fins
+    coreMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.14, 6), metalMat);
+    coreMesh.rotation.z = Math.PI / 2;
+    bodyGroup.add(coreMesh);
+
+    const coreOrb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 16), coreMat);
+    bodyGroup.add(coreOrb);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.52, 0.038, 6, 6), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.028, 6, 6), coreMat);
+    innerRing.rotation.x = Math.PI / 2;
+    bodyGroup.add(innerRing);
+
+    const finGeo = new THREE.BoxGeometry(0.55, 0.05, 0.24);
+    for (const angle of [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3]) {
+      const fin = new THREE.Mesh(finGeo, metalMat);
+      fin.rotation.z = angle;
+      fin.position.set(Math.cos(angle) * 0.34, Math.sin(angle) * 0.34, -0.1);
+      bodyGroup.add(fin);
+    }
+  } else if (skin.shape === 'nova') {
+    // Nova Crown: Celestial core + 3 interlocking crown rings + spire fins
+    coreMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.3, 1), coreMat);
+    bodyGroup.add(coreMesh);
+
+    const shellMesh = new THREE.Mesh(new THREE.SphereGeometry(0.38, 18, 18), shellMat);
+    bodyGroup.add(shellMesh);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.048, 10, 32), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.036, 10, 28), metalMat);
+    innerRing.rotation.x = Math.PI / 3;
+    bodyGroup.add(innerRing);
+
+    const crownRing = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.032, 10, 28), coreMat);
+    crownRing.rotation.x = -Math.PI / 3;
+    bodyGroup.add(crownRing);
+
+    const spikeGeo = new THREE.ConeGeometry(0.08, 0.28, 4);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const spire = new THREE.Mesh(spikeGeo, rimMat);
+      spire.position.set(0, Math.sin(a) * 0.56, Math.cos(a) * 0.56);
+      spire.rotation.x = a + Math.PI / 2;
+      bodyGroup.add(spire);
+    }
+  } else {
+    // Gyro Orb (default): Core + shell + titanium outer ring + glowing gimbal + beveled winglets
+    coreMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.28, 1), coreMat);
+    bodyGroup.add(coreMesh);
+
+    const shellMesh = new THREE.Mesh(new THREE.SphereGeometry(0.36, 20, 20), shellMat);
+    bodyGroup.add(shellMesh);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.055, 12, 32), metalMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.41, 0.032, 10, 28), rimMat);
+    innerRing.rotation.x = Math.PI / 3;
+    bodyGroup.add(innerRing);
+
+    const wingShape = new THREE.Shape();
+    wingShape.moveTo(-0.35, 0);
+    wingShape.lineTo(0.22, 0);
+    wingShape.lineTo(0.05, 0.22);
+    wingShape.lineTo(-0.28, 0.14);
+    wingShape.closePath();
+
+    const wingGeo = new THREE.ExtrudeGeometry(wingShape, {
+      depth: 0.04,
+      bevelEnabled: true,
+      bevelThickness: 0.015,
+      bevelSize: 0.015,
+      bevelSegments: 2,
+    });
+    wingGeo.center();
+
+    const leftWing = new THREE.Mesh(wingGeo, metalMat);
+    leftWing.rotation.y = Math.PI / 2;
+    leftWing.rotation.x = 0.35;
+    leftWing.position.set(-0.46, 0, -0.05);
+    bodyGroup.add(leftWing);
+
+    const rightWing = new THREE.Mesh(wingGeo, metalMat);
+    rightWing.rotation.y = Math.PI / 2;
+    rightWing.rotation.x = -0.35;
+    rightWing.position.set(0.46, 0, -0.05);
+    bodyGroup.add(rightWing);
+  }
+
+  return { bodyGroup, coreMesh, outerRing, innerRing };
 }
 
 export function createPlayerCraft(skin: CraftSkin): PlayerCraftHandles {
   const group = new THREE.Group();
 
-  // 1. Inner faceted energy core
-  const coreGeo = new THREE.IcosahedronGeometry(0.28, 1);
+  const metalMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    metalness: 0.9,
+    roughness: 0.22,
+  });
+
   const coreMat = new THREE.MeshStandardMaterial({
     color: skin.coreColor,
     emissive: skin.coreColor,
@@ -29,11 +265,15 @@ export function createPlayerCraft(skin: CraftSkin): PlayerCraftHandles {
     roughness: 0.15,
     metalness: 0.2,
   });
-  const coreMesh = new THREE.Mesh(coreGeo, coreMat);
-  group.add(coreMesh);
 
-  // 2. Translucent energy shell
-  const shellGeo = new THREE.SphereGeometry(0.36, 20, 20);
+  const rimMat = new THREE.MeshStandardMaterial({
+    color: skin.trailColor,
+    emissive: skin.trailColor,
+    emissiveIntensity: 1.4,
+    roughness: 0.25,
+    metalness: 0.7,
+  });
+
   const shellMat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
     emissive: skin.trailColor,
@@ -44,63 +284,11 @@ export function createPlayerCraft(skin: CraftSkin): PlayerCraftHandles {
     opacity: 0.35,
     depthWrite: false,
   });
-  const shellMesh = new THREE.Mesh(shellGeo, shellMat);
-  group.add(shellMesh);
 
-  // 3. Primary brushed titanium gyro ring
-  const outerRingGeo = new THREE.TorusGeometry(0.5, 0.055, 12, 32);
-  const metalMat = new THREE.MeshStandardMaterial({
-    color: 0x1e293b,
-    metalness: 0.9,
-    roughness: 0.22,
-  });
-  const outerRing = new THREE.Mesh(outerRingGeo, metalMat);
-  outerRing.rotation.y = Math.PI / 2;
-  group.add(outerRing);
+  let current = buildAvatarBody(skin, metalMat, coreMat, rimMat, shellMat);
+  group.add(current.bodyGroup);
 
-  // 4. Inner glowing gimbal ring
-  const innerRingGeo = new THREE.TorusGeometry(0.41, 0.032, 10, 28);
-  const rimMat = new THREE.MeshStandardMaterial({
-    color: skin.trailColor,
-    emissive: skin.trailColor,
-    emissiveIntensity: 1.4,
-    roughness: 0.25,
-    metalness: 0.7,
-  });
-  const innerRing = new THREE.Mesh(innerRingGeo, rimMat);
-  innerRing.rotation.x = Math.PI / 3;
-  group.add(innerRing);
-
-  // 5. Beveled side winglets (ExtrudeGeometry)
-  const wingShape = new THREE.Shape();
-  wingShape.moveTo(-0.35, 0);
-  wingShape.lineTo(0.22, 0);
-  wingShape.lineTo(0.05, 0.22);
-  wingShape.lineTo(-0.28, 0.14);
-  wingShape.closePath();
-
-  const wingGeo = new THREE.ExtrudeGeometry(wingShape, {
-    depth: 0.04,
-    bevelEnabled: true,
-    bevelThickness: 0.015,
-    bevelSize: 0.015,
-    bevelSegments: 2,
-  });
-  wingGeo.center();
-
-  const leftWing = new THREE.Mesh(wingGeo, metalMat);
-  leftWing.rotation.y = Math.PI / 2;
-  leftWing.rotation.x = 0.35;
-  leftWing.position.set(-0.46, 0, -0.05);
-  group.add(leftWing);
-
-  const rightWing = new THREE.Mesh(wingGeo, metalMat);
-  rightWing.rotation.y = Math.PI / 2;
-  rightWing.rotation.x = -0.35;
-  rightWing.position.set(0.46, 0, -0.05);
-  group.add(rightWing);
-
-  // 6. Rear plasma thruster cone (pointing along -Z)
+  // Rear plasma thruster cone (pointing along -Z)
   const thrusterGeo = new THREE.ConeGeometry(0.2, 0.55, 16);
   thrusterGeo.rotateX(-Math.PI / 2);
   const thrusterMat = new THREE.MeshStandardMaterial({
@@ -113,34 +301,98 @@ export function createPlayerCraft(skin: CraftSkin): PlayerCraftHandles {
     opacity: 0.88,
   });
   const thrusterCone = new THREE.Mesh(thrusterGeo, thrusterMat);
-  thrusterCone.position.set(0, 0, -0.52);
+  thrusterCone.position.set(0, 0, -0.54);
   group.add(thrusterCone);
 
-  // 7. Dynamic craft point light
+  // Special Power FX 1: Phase Shield / Phase Blink Dome
+  const shieldMesh = new THREE.Group();
+  const domeGeo = new THREE.IcosahedronGeometry(0.82, 1);
+  const domeMat = new THREE.MeshBasicMaterial({
+    color: 0x22d3ee,
+    transparent: true,
+    opacity: 0.22,
+    depthWrite: false,
+  });
+  shieldMesh.add(new THREE.Mesh(domeGeo, domeMat));
+  shieldMesh.add(
+    new THREE.LineSegments(
+      new THREE.EdgesGeometry(domeGeo),
+      new THREE.LineBasicMaterial({ color: 0x67e8f9 })
+    )
+  );
+  shieldMesh.visible = false;
+  group.add(shieldMesh);
+
+  // Special Power FX 2: Magnet / Score Overdrive Aura Ring
+  const auraGeo = new THREE.TorusGeometry(1.15, 0.045, 8, 36);
+  auraGeo.rotateY(Math.PI / 2);
+  const auraMat = new THREE.MeshBasicMaterial({
+    color: 0xfacc15,
+    transparent: true,
+    opacity: 0.78,
+  });
+  const auraRing = new THREE.Mesh(auraGeo, auraMat);
+  auraRing.visible = false;
+  group.add(auraRing);
+
+  // Special Power FX 3: Laser Breaker Forward Plasma Lance (+Z)
+  const beamGeo = new THREE.CylinderGeometry(0.22, 0.36, 13.0, 12);
+  beamGeo.rotateX(Math.PI / 2);
+  beamGeo.translate(0, 0, 7.0);
+  const beamMat = new THREE.MeshBasicMaterial({
+    color: 0xfb7185,
+    transparent: true,
+    opacity: 0.72,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const laserBeam = new THREE.Mesh(beamGeo, beamMat);
+  laserBeam.visible = false;
+  group.add(laserBeam);
+
+  // Dynamic craft point light
   const pointLight = new THREE.PointLight(skin.trailColor, 5.5, 14, 1.5);
   pointLight.position.set(0, 0, 0.2);
   group.add(pointLight);
 
-  const setSkin = (nextSkin: CraftSkin) => {
-    coreMat.color.setHex(nextSkin.coreColor);
-    coreMat.emissive.setHex(nextSkin.coreColor);
-    shellMat.emissive.setHex(nextSkin.trailColor);
-    rimMat.color.setHex(nextSkin.trailColor);
-    rimMat.emissive.setHex(nextSkin.trailColor);
-    thrusterMat.color.setHex(nextSkin.coreColor);
-    thrusterMat.emissive.setHex(nextSkin.trailColor);
-    pointLight.color.setHex(nextSkin.trailColor);
+  const handles: PlayerCraftHandles = {
+    group,
+    bodyGroup: current.bodyGroup,
+    coreMesh: current.coreMesh,
+    outerRing: current.outerRing,
+    innerRing: current.innerRing,
+    thrusterCone,
+    shieldMesh,
+    auraRing,
+    laserBeam,
+    pointLight,
+    setSkin: (nextSkin: CraftSkin) => {
+      coreMat.color.setHex(nextSkin.coreColor);
+      coreMat.emissive.setHex(nextSkin.coreColor);
+      shellMat.emissive.setHex(nextSkin.trailColor);
+      rimMat.color.setHex(nextSkin.trailColor);
+      rimMat.emissive.setHex(nextSkin.trailColor);
+      thrusterMat.color.setHex(nextSkin.coreColor);
+      thrusterMat.emissive.setHex(nextSkin.trailColor);
+      pointLight.color.setHex(nextSkin.trailColor);
+
+      // Swap 3D composite avatar geometry
+      group.remove(current.bodyGroup);
+      current.bodyGroup.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          (obj as THREE.Mesh).geometry?.dispose();
+        }
+      });
+      current = buildAvatarBody(nextSkin, metalMat, coreMat, rimMat, shellMat);
+      group.add(current.bodyGroup);
+      handles.bodyGroup = current.bodyGroup;
+      handles.coreMesh = current.coreMesh;
+      handles.outerRing = current.outerRing;
+      handles.innerRing = current.innerRing;
+    },
   };
 
-  return {
-    group,
-    coreMesh,
-    outerRing,
-    innerRing,
-    thrusterCone,
-    pointLight,
-    setSkin,
-  };
+  return handles;
 }
 
 export function createSawBlade(obs: SawObstacle, hazardHex: number): THREE.Group {

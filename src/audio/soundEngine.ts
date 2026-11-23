@@ -1,9 +1,16 @@
+import { SpecialPowerType } from '../types/game';
+
 const MUTE_STORAGE_KEY = 'cyber_trench_muted_v1';
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private muted: boolean = false;
   private noiseBuffer: AudioBuffer | null = null;
+
+  // Synthesized synthwave pulse state
+  private beatTimer: number = 0;
+  private beatStep: number = 0;
+  private intensityEnvelope: number = 0.15;
 
   constructor() {
     try {
@@ -34,7 +41,9 @@ class SoundEngine {
   private ensureContext(): AudioContext | null {
     if (this.muted) return null;
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return null;
       this.ctx = new AudioCtx();
     }
@@ -59,7 +68,115 @@ class SoundEngine {
     return buffer;
   }
 
+  /**
+   * Advances procedural synthwave pulse when actively playing and returns current intensity [0..1].
+   * Works visually even when audio is muted so dynamic color-shifting stays rhythmic.
+   */
+  public stepMusicPulse(dt: number, isPlaying: boolean, speedMultiplier: number): number {
+    this.intensityEnvelope = Math.max(0.12, this.intensityEnvelope - dt * 2.1);
+
+    if (!isPlaying) {
+      return this.intensityEnvelope * 0.5;
+    }
+
+    const bpm = 128 * Math.min(1.45, Math.max(0.75, speedMultiplier));
+    const sixteenthDur = 60 / bpm / 4;
+    this.beatTimer += dt;
+
+    if (this.beatTimer >= sixteenthDur) {
+      this.beatTimer -= sixteenthDur;
+      const step = this.beatStep % 16;
+      this.beatStep += 1;
+
+      const isKick = step % 4 === 0;
+      const isBass = step % 2 === 1;
+      const isArp = step % 4 === 2;
+
+      if (isKick) {
+        this.intensityEnvelope = Math.min(1.0, this.intensityEnvelope + 0.58);
+        this.playSynthKick();
+      } else if (isBass) {
+        this.intensityEnvelope = Math.min(1.0, this.intensityEnvelope + 0.22);
+        this.playSynthBass(step, speedMultiplier);
+      } else if (isArp) {
+        this.intensityEnvelope = Math.min(1.0, this.intensityEnvelope + 0.16);
+        this.playSynthArp(step, speedMultiplier);
+      }
+    }
+
+    return Math.min(1, this.intensityEnvelope);
+  }
+
+  public getIntensity(): number {
+    return Math.min(1, this.intensityEnvelope);
+  }
+
+  private playSynthKick(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(115, now);
+    osc.frequency.exponentialRampToValueAtTime(38, now + 0.09);
+    gain.gain.setValueAtTime(0.085, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  }
+
+  private playSynthBass(step: number, speedMult: number): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const bassNotes = [55, 55, 65.41, 73.42]; // A1, A1, C2, D2
+    const freq = bassNotes[Math.floor(step / 4) % bassNotes.length] * (speedMult > 1.15 ? 1.122 : 1);
+
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, now);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(360, now);
+    filter.frequency.exponentialRampToValueAtTime(140, now + 0.09);
+
+    gain.gain.setValueAtTime(0.045, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.11);
+  }
+
+  private playSynthArp(step: number, speedMult: number): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const arpNotes = [220, 261.63, 329.63, 392.0];
+    const freq = arpNotes[(step >> 2) % arpNotes.length] * (speedMult > 1.15 ? 1.25 : 1);
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, now);
+    gain.gain.setValueAtTime(0.025, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.09);
+  }
+
   public playTurn(ascending: boolean): void {
+    this.intensityEnvelope = Math.min(1, this.intensityEnvelope + 0.12);
     const ctx = this.ensureContext();
     if (!ctx) return;
 
@@ -76,7 +193,7 @@ class SoundEngine {
       osc.frequency.exponentialRampToValueAtTime(240, now + 0.045);
     }
 
-    gain.gain.setValueAtTime(0.08, now);
+    gain.gain.setValueAtTime(0.075, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
 
     osc.connect(gain);
@@ -86,11 +203,11 @@ class SoundEngine {
   }
 
   public playCollectGold(comboIndex: number): void {
+    this.intensityEnvelope = Math.min(1, this.intensityEnvelope + 0.18);
     const ctx = this.ensureContext();
     if (!ctx) return;
 
     const now = ctx.currentTime;
-    // Pentatonic scale frequencies starting at C5
     const scale = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5, 1174.66, 1318.51];
     const freq = scale[Math.min(comboIndex % scale.length, scale.length - 1)];
 
@@ -119,11 +236,12 @@ class SoundEngine {
   }
 
   public playCollectStar(): void {
+    this.intensityEnvelope = 1.0;
     const ctx = this.ensureContext();
     if (!ctx) return;
 
     const now = ctx.currentTime;
-    const notes = [659.25, 830.61, 987.77, 1318.51]; // E major shimmering arpeggio
+    const notes = [659.25, 830.61, 987.77, 1318.51];
     notes.forEach((freq, idx) => {
       const start = now + idx * 0.045;
       const osc = ctx.createOscillator();
@@ -140,6 +258,7 @@ class SoundEngine {
   }
 
   public playCheckpoint(): void {
+    this.intensityEnvelope = 0.85;
     const ctx = this.ensureContext();
     if (!ctx) return;
 
@@ -161,6 +280,7 @@ class SoundEngine {
   }
 
   public playSpeedGate(boost: boolean): void {
+    this.intensityEnvelope = 1.0;
     const ctx = this.ensureContext();
     if (!ctx) return;
 
@@ -192,13 +312,77 @@ class SoundEngine {
     osc.stop(now + 0.22);
   }
 
+  public playSpecialPower(powerType: SpecialPowerType): void {
+    this.intensityEnvelope = 1.0;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    if (powerType === 'slowmo') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(740, now);
+      osc.frequency.exponentialRampToValueAtTime(210, now + 0.28);
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(370, now);
+      osc2.frequency.exponentialRampToValueAtTime(105, now + 0.28);
+    } else if (powerType === 'breaker') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(280, now);
+      osc.frequency.exponentialRampToValueAtTime(980, now + 0.2);
+      osc2.type = 'square';
+      osc2.frequency.setValueAtTime(140, now);
+      osc2.frequency.exponentialRampToValueAtTime(490, now + 0.2);
+    } else {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(360, now);
+      osc.frequency.exponentialRampToValueAtTime(880, now + 0.22);
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(540, now);
+      osc2.frequency.exponentialRampToValueAtTime(1320, now + 0.22);
+    }
+
+    gain.gain.setValueAtTime(0.13, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+
+    osc.connect(gain);
+    osc2.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc2.start(now);
+    osc.stop(now + 0.32);
+    osc2.stop(now + 0.32);
+  }
+
+  public playShieldPop(): void {
+    this.intensityEnvelope = 0.95;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(620, now);
+    osc.frequency.exponentialRampToValueAtTime(190, now + 0.24);
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.26);
+  }
+
   public playCrash(): void {
+    this.intensityEnvelope = 1.0;
     const ctx = this.ensureContext();
     if (!ctx) return;
 
     const now = ctx.currentTime;
 
-    // Low impact punch
     const osc = ctx.createOscillator();
     const oscGain = ctx.createGain();
     osc.type = 'sawtooth';
@@ -211,7 +395,6 @@ class SoundEngine {
     osc.start(now);
     osc.stop(now + 0.32);
 
-    // Filtered noise burst
     const noise = ctx.createBufferSource();
     noise.buffer = this.getNoiseBuffer(ctx);
     const filter = ctx.createBiquadFilter();
@@ -230,6 +413,7 @@ class SoundEngine {
   }
 
   public playLevelComplete(): void {
+    this.intensityEnvelope = 1.0;
     const ctx = this.ensureContext();
     if (!ctx) return;
 

@@ -1,4 +1,4 @@
-import { CollectibleItem, CraftSkin, LevelDefinition } from '../types/game';
+import { CollectibleItem, CraftSkin, LevelDefinition, LevelObstacle } from '../types/game';
 
 export const TRACK_FLOOR_Y = 0;
 export const TRACK_CEILING_Y = 12;
@@ -10,35 +10,81 @@ export const WAVE_SLOPE = Math.tan((WAVE_ANGLE_DEG * Math.PI) / 180); // ~0.9004
 export const CRAFT_SKINS: CraftSkin[] = [
   {
     id: 'cyan-pulse',
-    name: 'Cyan Core',
+    name: 'Gyro Orb',
+    shape: 'gyro',
     coreColor: 0x00f5d4,
     trailColor: 0x22d3ee,
     cssSwatch: '#22d3ee',
     unlockGold: 0,
+    powerType: 'shield',
+    powerName: 'Phase Shield',
+    powerDescription: 'Deploys an energy barrier that absorbs 1 hazard hit with a shockwave burst.',
+    powerDuration: 8.0,
   },
   {
     id: 'solar-amber',
-    name: 'Solar Flare',
+    name: 'Solar Dart',
+    shape: 'dart',
     coreColor: 0xfbbf24,
     trailColor: 0xf59e0b,
     cssSwatch: '#f59e0b',
-    unlockGold: 2500,
+    unlockGold: 0,
+    powerType: 'magnet',
+    powerName: 'Magnet Surge',
+    powerDescription: 'Draws nearby gold cubes and stars straight into the craft for 6.0s.',
+    powerDuration: 6.0,
   },
   {
     id: 'hyper-violet',
-    name: 'Prism Violet',
+    name: 'Prism Star',
+    shape: 'prism',
     coreColor: 0xe879f9,
     trailColor: 0xc026d3,
     cssSwatch: '#e879f9',
-    unlockGold: 6000,
+    unlockGold: 1200,
+    powerType: 'slowmo',
+    powerName: 'Chrono Slow',
+    powerDescription: 'Dilates trench speed to 0.62x for 4.2s for pinpoint threading.',
+    powerDuration: 4.2,
   },
   {
     id: 'crimson-apex',
-    name: 'Apex Nova',
+    name: 'Apex Scythe',
+    shape: 'scythe',
     coreColor: 0xfb7185,
     trailColor: 0xf43f5e,
     cssSwatch: '#fb7185',
-    unlockGold: 11000,
+    unlockGold: 2800,
+    powerType: 'breaker',
+    powerName: 'Laser Breaker',
+    powerDescription: 'Projects a forward plasma lance that shatters obstacles ahead for 3.6s.',
+    powerDuration: 3.6,
+  },
+  {
+    id: 'emerald-phantom',
+    name: 'Jade Phantom',
+    shape: 'phantom',
+    coreColor: 0x34d399,
+    trailColor: 0x10b981,
+    cssSwatch: '#34d399',
+    unlockGold: 5500,
+    powerType: 'phase',
+    powerName: 'Phase Blink',
+    powerDescription: 'Turns the craft intangible for 2.8s, passing safely through all hazards.',
+    powerDuration: 2.8,
+  },
+  {
+    id: 'nova-crown',
+    name: 'Nova Crown',
+    shape: 'nova',
+    coreColor: 0xfef08a,
+    trailColor: 0x38bdf8,
+    cssSwatch: '#fde047',
+    unlockGold: 9000,
+    powerType: 'overdrive',
+    powerName: 'Score Overdrive',
+    powerDescription: 'Grants 2.5x gold multiplier plus a wide magnetic aura for 5.0s.',
+    powerDuration: 5.0,
   },
 ];
 
@@ -395,3 +441,105 @@ export const LEVELS: LevelDefinition[] = [
     ],
   },
 ];
+
+export const ENDLESS_CHUNK_LENGTH = 90;
+
+export const ENDLESS_LEVEL_BASE: LevelDefinition = {
+  id: 'endless-trench',
+  number: 0,
+  name: 'Endless Trench',
+  subtitle: 'Infinite procedural cyber-canyon with escalating speed',
+  difficulty: 'Overdrive',
+  baseSpeed: 13.8,
+  length: 100000,
+  theme: {
+    accentHex: 0x06b6d4,
+    hazardHex: 0xf43f5e,
+    trenchGlowHex: 0x38bdf8,
+    fogHex: 0x06091b,
+    label: 'Infinite Trench',
+  },
+  obstacles: [],
+  collectibles: [],
+  checkpoints: [],
+};
+
+export function generateEndlessChunk(
+  chunkIndex: number,
+  zStart: number
+): { obstacles: LevelObstacle[]; collectibles: CollectibleItem[] } {
+  const obstacles: LevelObstacle[] = [];
+  const collectibles: CollectibleItem[] = [];
+  const pattern = chunkIndex % 5;
+  const spinBase = 3.8 + Math.min(2.5, chunkIndex * 0.12);
+
+  if (pattern === 0) {
+    // T-Block Slalom + Gold Zigzag
+    obstacles.push(
+      { id: nextId('eb'), type: 'block', z: zStart + 22, y: 9.4, width: 5.2, height: 4.5, shape: 'tTop' },
+      { id: nextId('eb'), type: 'block', z: zStart + 50, y: 2.6, width: 5.2, height: 4.5, shape: 'tBottom' },
+      { id: nextId('esaw'), type: 'saw', z: zStart + 76, y: 6.0, radius: 1.65, spinSpeed: spinBase }
+    );
+    collectibles.push(
+      ...goldLine(zStart + 14, 4.0, zStart + 30, 4.0, 4, 120),
+      ...goldLine(zStart + 42, 8.0, zStart + 58, 8.0, 4, 120),
+      ...goldDiamond(zStart + 76, 9.4, 1.5, 1.1, 140)
+    );
+  } else if (pattern === 1) {
+    // Star Mine Alternating Corridor + Floor Spikes
+    obstacles.push(
+      { id: nextId('esm'), type: 'starMine', z: zStart + 20, y: 4.3, radius: 1.65, spinSpeed: spinBase },
+      { id: nextId('esm'), type: 'starMine', z: zStart + 44, y: 8.1, radius: 1.65, spinSpeed: -spinBase },
+      { id: nextId('esp'), type: 'spikes', zStart: zStart + 60, zEnd: zStart + 82, placement: 'floor', height: 1.6 }
+    );
+    collectibles.push(
+      ...goldLine(zStart + 14, 8.2, zStart + 28, 8.2, 4, 120),
+      ...goldLine(zStart + 38, 3.8, zStart + 52, 3.8, 4, 120),
+      ...goldTriangle(zStart + 71, 6.2, true, 130)
+    );
+  } else if (pattern === 2) {
+    // Gate Thread + Center Split + Ceiling Spikes
+    obstacles.push(
+      { id: nextId('eb'), type: 'block', z: zStart + 24, y: 10.2, width: 4.2, height: 3.6, shape: 'rect' },
+      { id: nextId('eb'), type: 'block', z: zStart + 24, y: 1.8, width: 4.2, height: 3.6, shape: 'rect' },
+      { id: nextId('esp'), type: 'spikes', zStart: zStart + 44, zEnd: zStart + 66, placement: 'ceiling', height: 1.65 },
+      { id: nextId('esaw'), type: 'saw', z: zStart + 55, y: 3.4, radius: 1.55, spinSpeed: -spinBase },
+      { id: nextId('eb'), type: 'block', z: zStart + 80, y: 6.0, width: 5.0, height: 3.4, shape: 'rect' }
+    );
+    collectibles.push(
+      ...goldLine(zStart + 16, 6.0, zStart + 32, 6.0, 4, 130),
+      ...goldLine(zStart + 46, 6.8, zStart + 64, 6.8, 4, 130),
+      ...goldDiamond(zStart + 80, 9.5, 1.4, 1.0, 150)
+    );
+  } else if (pattern === 3) {
+    // Speed Boost Surge + Twin Saws
+    const boost = 1.15 + Math.min(0.25, chunkIndex * 0.02);
+    obstacles.push(
+      { id: nextId('esg'), type: 'speedGate', z: zStart + 12, multiplier: boost },
+      { id: nextId('esaw'), type: 'saw', z: zStart + 38, y: 8.6, radius: 1.7, spinSpeed: spinBase },
+      { id: nextId('esaw'), type: 'saw', z: zStart + 38, y: 3.4, radius: 1.7, spinSpeed: -spinBase },
+      { id: nextId('esm'), type: 'starMine', z: zStart + 68, y: 6.0, radius: 1.75, spinSpeed: spinBase }
+    );
+    collectibles.push(
+      ...goldLine(zStart + 26, 6.0, zStart + 50, 6.0, 5, 140),
+      ...goldTriangle(zStart + 68, 9.2, false, 150)
+    );
+  } else {
+    // Dual Spikes Tunnel + Staggered Saws + Normalizer
+    obstacles.push(
+      { id: nextId('esp'), type: 'spikes', zStart: zStart + 16, zEnd: zStart + 42, placement: 'floor', height: 1.65 },
+      { id: nextId('esp'), type: 'spikes', zStart: zStart + 16, zEnd: zStart + 42, placement: 'ceiling', height: 1.65 },
+      { id: nextId('esaw'), type: 'saw', z: zStart + 60, y: 7.8, radius: 1.6, spinSpeed: spinBase },
+      { id: nextId('eb'), type: 'block', z: zStart + 80, y: 2.2, width: 4.5, height: 4.2, shape: 'rect' },
+      { id: nextId('esg'), type: 'speedGate', z: zStart + 88, multiplier: 1.0 + Math.min(0.2, chunkIndex * 0.015) }
+    );
+    collectibles.push(
+      ...goldDiamond(zStart + 29, 6.0, 2.0, 1.5, 150),
+      ...goldLine(zStart + 52, 3.8, zStart + 68, 3.8, 4, 140),
+      ...goldLine(zStart + 72, 7.6, zStart + 86, 7.6, 4, 140)
+    );
+  }
+
+  return { obstacles, collectibles };
+}
+

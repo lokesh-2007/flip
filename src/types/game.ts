@@ -2,6 +2,24 @@ export type GamePhase = 'ready' | 'playing' | 'crashed' | 'completed';
 
 export type CameraMode = 'isometric' | 'chase';
 
+export type GameMode = 'classic' | 'inverted' | 'hardcore' | 'endless';
+
+export type SpecialPowerType =
+  | 'shield'
+  | 'magnet'
+  | 'slowmo'
+  | 'breaker'
+  | 'phase'
+  | 'overdrive';
+
+export type AvatarShape =
+  | 'gyro'
+  | 'dart'
+  | 'prism'
+  | 'scythe'
+  | 'phantom'
+  | 'nova';
+
 export interface SawObstacle {
   id: string;
   type: 'saw';
@@ -93,10 +111,15 @@ export interface LevelDefinition {
 export interface CraftSkin {
   id: string;
   name: string;
+  shape: AvatarShape;
   coreColor: number;
   trailColor: number;
   cssSwatch: string;
   unlockGold: number;
+  powerType: SpecialPowerType;
+  powerName: string;
+  powerDescription: string;
+  powerDuration: number; // seconds (for shield: max standby duration until hit or 8s)
 }
 
 export interface LevelProgressRecord {
@@ -108,11 +131,18 @@ export interface LevelProgressRecord {
 
 export interface HudSnapshot {
   phase: GamePhase;
+  mode: GameMode;
   percent: number;
+  distance: number;
   score: number;
   stars: [boolean, boolean, boolean];
   attempts: number;
   activeSpeedMultiplier: number;
   hasCheckpoint: boolean;
   checkpointPercent: number;
+  powerCharge: number; // 0..100
+  powerActiveRemaining: number; // seconds remaining, 0 if inactive
+  powerDuration: number;
+  shieldActive: boolean;
+  musicIntensity: number; // 0..1
 }

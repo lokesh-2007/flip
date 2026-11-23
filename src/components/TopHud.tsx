@@ -2,19 +2,22 @@ import React from 'react';
 import {
   Eye,
   Flag,
+  Infinity as InfinityIcon,
   LayoutGrid,
   RotateCcw,
   Star,
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import { CameraMode, HudSnapshot, LevelDefinition } from '../types/game';
+import { CameraMode, GameMode, HudSnapshot, LevelDefinition } from '../types/game';
 import { formatScore } from '../utils/formatters';
 
 interface TopHudProps {
   level: LevelDefinition;
+  mode: GameMode;
   hud: HudSnapshot;
   totalGold: number;
+  endlessBest: number;
   muted: boolean;
   cameraMode: CameraMode;
   onOpenLevels: () => void;
@@ -23,10 +26,19 @@ interface TopHudProps {
   onToggleCamera: () => void;
 }
 
+const MODE_LABELS: Record<GameMode, string> = {
+  classic: 'Arcade',
+  inverted: 'Gravity Flip',
+  hardcore: 'Hardcore',
+  endless: 'Endless',
+};
+
 export const TopHud: React.FC<TopHudProps> = ({
   level,
+  mode,
   hud,
   totalGold,
+  endlessBest,
   muted,
   cameraMode,
   onOpenLevels,
@@ -40,6 +52,7 @@ export const TopHud: React.FC<TopHudProps> = ({
 
   const starCount = hud.stars.filter(Boolean).length;
   const displayedGold = totalGold + hud.score;
+  const isEndless = mode === 'endless';
 
   return (
     <header
@@ -53,11 +66,12 @@ export const TopHud: React.FC<TopHudProps> = ({
         <button
           type="button"
           onClick={onOpenLevels}
-          title="Levels & Craft Skins"
-          aria-label="Open Level Select"
-          className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/15 bg-[#0a0f26]/90 text-slate-200 transition-colors hover:border-cyan-400/60 hover:text-cyan-300 focus-visible:outline-2 focus-visible:outline-cyan-400"
+          title="Courses, Modes & Avatars"
+          aria-label="Open Course and Avatar Select"
+          className="flex h-10 items-center gap-2 rounded-lg border border-white/15 bg-[#0a0f26]/90 px-3 text-xs font-semibold text-slate-200 transition-colors hover:border-cyan-400/60 hover:text-cyan-300 focus-visible:outline-2 focus-visible:outline-cyan-400 whitespace-nowrap"
         >
           <LayoutGrid className="h-4 w-4" />
+          <span className="hidden md:inline">{MODE_LABELS[mode]}</span>
         </button>
 
         <button
@@ -92,54 +106,85 @@ export const TopHud: React.FC<TopHudProps> = ({
         </button>
       </div>
 
-      {/* Top-Center: Progress Bar & Percentage */}
+      {/* Top-Center: Progress Bar or Endless Distance */}
       <div className="pointer-events-auto flex flex-1 max-w-md flex-col items-center gap-1.5">
-        <div className="flex w-full items-center justify-between text-xs font-medium tracking-wide text-slate-300">
-          <span className="truncate font-display text-slate-100">
-            {level.number}. {level.name}
-          </span>
-          <span className="font-mono-num text-cyan-300 font-bold">
-            {hud.percent}%
-          </span>
-        </div>
-
-        <div className="flex w-full items-center gap-2">
-          <div className="relative h-2.5 flex-1 overflow-hidden rounded-full border border-white/15 bg-[#070b1e]/95">
-            {/* Progress Fill */}
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-sky-400 to-teal-300 transition-[width] duration-75"
-              style={{ width: `${hud.percent}%` }}
-            />
-            {/* Checkpoint tick markers */}
-            {level.checkpoints.map((cp) => {
-              const cpPct = (cp.z / level.length) * 100;
-              return (
+        {isEndless ? (
+          <>
+            <div className="flex w-full items-center justify-between text-xs font-medium tracking-wide text-slate-300">
+              <span className="truncate font-display text-slate-100">
+                Endless Trench
+              </span>
+              <span className="font-mono-num text-cyan-300 font-bold">
+                {hud.distance}m <span className="text-slate-400 font-normal">· Best {Math.max(endlessBest, hud.distance)}m</span>
+              </span>
+            </div>
+            <div className="flex w-full items-center gap-2">
+              <div className="relative h-2.5 flex-1 overflow-hidden rounded-full border border-white/15 bg-[#070b1e]/95">
                 <div
-                  key={cp.id}
-                  className="absolute top-0 bottom-0 w-0.5 bg-white/45"
-                  style={{ left: `${cpPct}%` }}
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-fuchsia-400 to-amber-300 transition-[width] duration-75"
+                  style={{
+                    width: `${Math.min(100, ((hud.distance % 250) / 250) * 100)}%`,
+                  }}
                 />
-              );
-            })}
-          </div>
-          <Flag className="h-4 w-4 shrink-0 text-cyan-300" />
-        </div>
+              </div>
+              <InfinityIcon className="h-4 w-4 shrink-0 text-cyan-300" />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex w-full items-center justify-between text-xs font-medium tracking-wide text-slate-300">
+              <span className="truncate font-display text-slate-100">
+                {level.number}. {level.name}
+                {mode !== 'classic' && (
+                  <span className="ml-2 text-amber-300">· {MODE_LABELS[mode]}</span>
+                )}
+              </span>
+              <span className="font-mono-num text-cyan-300 font-bold">
+                {hud.percent}%
+              </span>
+            </div>
+
+            <div className="flex w-full items-center gap-2">
+              <div className="relative h-2.5 flex-1 overflow-hidden rounded-full border border-white/15 bg-[#070b1e]/95">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-sky-400 to-teal-300 transition-[width] duration-75"
+                  style={{ width: `${hud.percent}%` }}
+                />
+                {mode !== 'hardcore' &&
+                  level.checkpoints.map((cp) => {
+                    const cpPct = (cp.z / level.length) * 100;
+                    return (
+                      <div
+                        key={cp.id}
+                        className="absolute top-0 bottom-0 w-0.5 bg-white/45"
+                        style={{ left: `${cpPct}%` }}
+                      />
+                    );
+                  })}
+              </div>
+              <Flag className="h-4 w-4 shrink-0 text-cyan-300" />
+            </div>
+          </>
+        )}
       </div>
 
       {/* Top-Right: Stars & Gold Score Counters */}
       <div className="pointer-events-auto flex items-center gap-4 sm:gap-5 shrink-0 rounded-lg border border-white/15 bg-[#0a0f26]/90 px-3.5 py-2">
-        <div className="flex items-center gap-1.5" title="Sector Stars Collected">
-          <Star
-            className={`h-4 w-4 ${
-              starCount > 0 ? 'fill-amber-400 text-amber-400' : 'text-slate-400'
-            }`}
-          />
-          <span className="font-mono-num text-sm font-bold text-slate-100">
-            {starCount}/3
-          </span>
-        </div>
-
-        <span className="h-4 w-px bg-white/15" aria-hidden="true" />
+        {!isEndless && (
+          <>
+            <div className="flex items-center gap-1.5" title="Sector Stars Collected">
+              <Star
+                className={`h-4 w-4 ${
+                  starCount > 0 ? 'fill-amber-400 text-amber-400' : 'text-slate-400'
+                }`}
+              />
+              <span className="font-mono-num text-sm font-bold text-slate-100">
+                {starCount}/3
+              </span>
+            </div>
+            <span className="h-4 w-px bg-white/15" aria-hidden="true" />
+          </>
+        )}
 
         <div className="flex items-center gap-1.5" title="Collected Gold Score">
           <span

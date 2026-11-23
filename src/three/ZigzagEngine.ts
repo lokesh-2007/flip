@@ -3,6 +3,8 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { soundEngine } from '../audio/soundEngine';
 import {
   CRAFT_SKINS,
+  ENDLESS_CHUNK_LENGTH,
+  generateEndlessChunk,
   PLAY_MAX_Y,
   PLAY_MIN_Y,
   TRACK_CEILING_Y,
@@ -14,6 +16,7 @@ import {
   CheckpointMarker,
   CollectibleItem,
   CraftSkin,
+  GameMode,
   GamePhase,
   HudSnapshot,
   LevelDefinition,
@@ -42,6 +45,8 @@ import {
 // Pre-allocated scratch objects for zero-GC render loop
 const _dummy = new THREE.Object3D();
 const _color = new THREE.Color();
+const _baseColor = new THREE.Color();
+const _hsl = { h: 0, s: 0, l: 0 };
 const _camTargetPos = new THREE.Vector3();
 const _camTargetLook = new THREE.Vector3();
 const _camCurrentLook = new THREE.Vector3();
@@ -49,7 +54,8 @@ const _camCurrentLook = new THREE.Vector3();
 const HITBOX_RADIUS = 0.30;
 const PICKUP_RADIUS = 0.95;
 const MAX_TRAIL_POINTS = 320;
-const PARTICLE_POOL_SIZE = 96;
+const PARTICLE_POOL_SIZE = 112;
+const ENDLESS_SLAB_LEN = 264;
 
 interface TrailVertex {
   z: number;
@@ -75,6 +81,7 @@ interface RuntimeObstacle {
   group: THREE.Group;
   subBoxes?: Array<{ zMin: number; zMax: number; yMin: number; yMax: number }>;
   triggered?: boolean;
+  destroyed?: boolean;
 }
 
 interface RuntimeCollectible {
@@ -125,6 +132,22 @@ export class ZigzagEngine {
   private craft: PlayerCraftHandles;
   private currentSkin: CraftSkin = CRAFT_SKINS[0];
 
+  // Environment color-shifting material references
+  private floorMat: THREE.MeshStandardMaterial | null = null;
+  private railMat: THREE.MeshStandardMaterial | null = null;
+  private towerMat: THREE.MeshStandardMaterial | null = null;
+  private floatMat: THREE.MeshStandardMaterial | null = null;
+  private floorMesh: THREE.Mesh | null = null;
+  private ceilingMesh: THREE.Mesh | null = null;
+  private railMeshes: THREE.Mesh[] = [];
+  private parallaxTowers: THREE.InstancedMesh | null = null;
+  private parallaxFloaters: THREE.InstancedMesh | null = null;
+  private baseAccentHue: number = 0.52;
+  private baseHazardHue: number = 0.95;
+  private baseFogColor = new THREE.Color(0x070c22);
+  private smoothedIntensity: number = 0.15;
+  private huePhase: number = 0;
+
   // Dynamic 3D ribbon trail buffers
   private trailMeshA: THREE.Mesh;
   private trailMeshB: THREE.Mesh;
@@ -140,6 +163,7 @@ export class ZigzagEngine {
 
   // Level runtime objects
   private currentLevel!: LevelDefinition;
+  private gameMode: GameMode = 'classic';
   private runtimeObstacles: RuntimeObstacle[] = [];
   private runtimeCollectibles: RuntimeCollectible[] = [];
   private runtimeCheckpoints: RuntimeCheckpoint[] = [];
@@ -147,6 +171,14 @@ export class ZigzagEngine {
   private disposableTextures: THREE.Texture[] = [];
   private disposableGeometries: THREE.BufferGeometry[] = [];
   private disposableMaterials: THREE.Material[] = [];
+
+  // Endless streaming state
+  private nextEndlessChunkIdx: number = 0;
+  private nextEndlessZ: number = 36;
+  private endlessGridTileUnit: number = 8;
+  private endlessSpanZ: number = 288;
+  private towerInstances: Array<{ x: number; y: number; z: number; w: number; h: number }> = [];
+  private floaterInstances: Array<{ x: number; y: number; z: number; s: number; rx: number; ry: number }> = [];
 
   // Gameplay state
   private phase: GamePhase = 'ready';
@@ -168,6 +200,13 @@ export class ZigzagEngine {
   private totalElapsed: number = 0;
   private lastHudEmit: number = 0;
 
+  // Special Power state
+  private powerCharge: number = 100;
+  private powerActiveRemaining: number = 0;
+  private shieldActive: boolean = false;
+  private invulnTimer: number = 0;
+  private currentMusicIntensity: number = 0.15;
+
   // Loop & lifecycle
   private frameId: number = 0;
   private lastTimeMs: number = 0;
@@ -178,11 +217,13 @@ export class ZigzagEngine {
     container: HTMLElement,
     initialLevel: LevelDefinition,
     initialSkin: CraftSkin,
+    initialMode: GameMode,
     callbacks: EngineCallbacks
   ) {
     this.container = container;
     this.callbacks = callbacks;
     this.currentSkin = initialSkin;
+    this.gameMode = initialMode;
     this.isSoftwareGl = detectSoftwareWebGL();
 
     const width = Math.max(1, container.clientWidth);
@@ -318,13 +359,12 @@ export class ZigzagEngine {
     this.particleMesh.instanceMatrix.needsUpdate = true;
 
     // Load initial level
-    this.loadLevel(initialLevel);
+    this.loadLevel(initialLevel, initialMode);
 
     if (!this.isSoftwareGl) {
       this.renderer.compile(this.scene, this.camera);
     }
 
-    // Bind resize & context events
     window.addEventListener('resize', this.handleResize);
     this.renderer.domElement.addEventListener('webglcontextlost', this.handleContextLost);
     this.renderer.domElement.addEventListener('webglcontextrestored', this.handleContextRestored);
@@ -367,6 +407,16 @@ export class ZigzagEngine {
     this.craft.setSkin(skin);
     const mat = this.trailMeshA.material as THREE.MeshBasicMaterial;
     mat.color.setHex(skin.trailColor);
+    this.powerActiveRemaining = 0;
+    this.shieldActive = false;
+    this.craft.shieldMesh.visible = false;
+    this.craft.auraRing.visible = false;
+    this.craft.laserBeam.visible = false;
+    this.emitHud(true);
+  }
+
+  public setMode(mode: GameMode, level: LevelDefinition): void {
+    this.loadLevel(level, mode);
   }
 
   public toggleCameraMode(): CameraMode {
@@ -378,6 +428,21 @@ export class ZigzagEngine {
     return this.cameraMode;
   }
 
+  public activateSpecialPower(): boolean {
+    if (this.paused || this.phase !== 'playing') return false;
+    if (this.powerCharge < 100 || this.powerActiveRemaining > 0) return false;
+
+    this.powerCharge = 0;
+    this.powerActiveRemaining = this.currentSkin.powerDuration;
+    this.shieldActive = this.currentSkin.powerType === 'shield';
+
+    soundEngine.playSpecialPower(this.currentSkin.powerType);
+    this.spawnBurst(0, this.playerY, this.playerZ, 18, this.currentSkin.coreColor, 10);
+    this.shakeIntensity = Math.max(this.shakeIntensity, 0.22);
+    this.emitHud(true);
+    return true;
+  }
+
   public setHolding(holding: boolean): void {
     if (this.paused) return;
 
@@ -387,21 +452,20 @@ export class ZigzagEngine {
         this.isHolding = true;
         this.railState = 'free';
         this.trailVertices = [{ z: this.playerZ, y: this.playerY }];
-        soundEngine.playTurn(true);
+        soundEngine.playTurn(this.gameMode !== 'inverted');
         this.emitHud(true);
       }
       return;
     }
 
     if (this.phase === 'crashed') {
-      // Allow quick tap retry after 0.25s burst
       if (holding && this.crashTimer >= 0.25) {
-        this.respawnAtCheckpoint();
+        this.respawnAtCheckpoint(this.gameMode === 'hardcore' || this.gameMode === 'endless');
         this.phase = 'playing';
         this.isHolding = true;
         this.railState = 'free';
         this.trailVertices = [{ z: this.playerZ, y: this.playerY }];
-        soundEngine.playTurn(true);
+        soundEngine.playTurn(this.gameMode !== 'inverted');
         this.emitHud(true);
       }
       return;
@@ -411,16 +475,21 @@ export class ZigzagEngine {
 
     if (this.isHolding !== holding) {
       this.isHolding = holding;
-      // Record crisp angular vertex at exact turn coordinate
       this.trailVertices.push({ z: this.playerZ, y: this.playerY });
       if (this.trailVertices.length > MAX_TRAIL_POINTS - 2) {
         this.trailVertices.shift();
       }
-      soundEngine.playTurn(holding);
+      const ascending = this.gameMode === 'inverted' ? !holding : holding;
+      soundEngine.playTurn(ascending);
     }
   }
 
   public restartFull(): void {
+    if (this.gameMode === 'endless') {
+      this.loadLevel(this.currentLevel, 'endless');
+      return;
+    }
+
     this.lastCheckpoint = null;
     this.attempts += 1;
     this.score = 0;
@@ -428,20 +497,20 @@ export class ZigzagEngine {
     this.goldCombo = 0;
     this.activeSpeedMultiplier = 1.0;
 
-    // Reset collectibles, gates, checkpoints
     for (const item of this.runtimeCollectibles) {
       item.collected = false;
       item.group.visible = true;
     }
     for (const obs of this.runtimeObstacles) {
       obs.triggered = false;
+      obs.destroyed = false;
+      obs.group.visible = true;
     }
     for (const cp of this.runtimeCheckpoints) {
       cp.reached = false;
       cp.reset();
     }
 
-    // Rebuild checkpoint markers cleanly if needed or just reset position
     this.respawnAtCheckpoint(true);
   }
 
@@ -458,7 +527,15 @@ export class ZigzagEngine {
     this.shakeIntensity = 0;
     this.crashTimer = 0;
 
-    // Reset speed multiplier to whatever gates exist before startZ
+    // Reset power state on respawn
+    this.powerCharge = 100;
+    this.powerActiveRemaining = 0;
+    this.shieldActive = false;
+    this.invulnTimer = 0;
+    this.craft.shieldMesh.visible = false;
+    this.craft.auraRing.visible = false;
+    this.craft.laserBeam.visible = false;
+
     let mult = 1.0;
     for (const obs of this.runtimeObstacles) {
       if (obs.data.type === 'speedGate' && obs.data.z <= startZ) {
@@ -480,12 +557,22 @@ export class ZigzagEngine {
     this.emitHud(true);
   }
 
-  public loadLevel(level: LevelDefinition): void {
+  public loadLevel(level: LevelDefinition, mode: GameMode = this.gameMode): void {
     this.currentLevel = level;
+    this.gameMode = mode;
     this.clearLevelGroup();
 
     const { theme } = level;
-    this.scene.background = new THREE.Color(theme.fogHex);
+    this.baseFogColor.setHex(theme.fogHex);
+    _baseColor.setHex(theme.trenchGlowHex);
+    _baseColor.getHSL(_hsl);
+    this.baseAccentHue = _hsl.h;
+
+    _baseColor.setHex(theme.hazardHex);
+    _baseColor.getHSL(_hsl);
+    this.baseHazardHue = _hsl.h;
+
+    this.scene.background = this.baseFogColor.clone();
     this.scene.fog = new THREE.FogExp2(theme.fogHex, 0.0115);
 
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
@@ -494,40 +581,42 @@ export class ZigzagEngine {
     const beamTex = createDashedBeamTexture(theme.accentHex);
     this.disposableTextures.push(gridTex, checkerTex, beamTex);
 
-    // Track length with lead-in and run-out
+    const isEndless = mode === 'endless';
     const trackStartZ = -24;
-    const trackEndZ = level.length + 60;
+    const trackEndZ = isEndless ? ENDLESS_SLAB_LEN : level.length + 60;
     const trackLen = trackEndZ - trackStartZ;
     const trackCenterZ = (trackStartZ + trackEndZ) * 0.5;
 
     // Floor & Ceiling cyber-trench slabs
     gridTex.repeat.set(2, trackLen / 8);
+    this.endlessGridTileUnit = 8;
+    this.endlessSpanZ = trackLen;
     const slabGeo = new THREE.PlaneGeometry(8.5, trackLen);
     this.disposableGeometries.push(slabGeo);
 
-    const floorMat = new THREE.MeshStandardMaterial({
+    this.floorMat = new THREE.MeshStandardMaterial({
       map: gridTex,
       roughness: 0.35,
       metalness: 0.65,
       emissive: theme.trenchGlowHex,
       emissiveMap: gridTex,
-      emissiveIntensity: 0.35,
+      emissiveIntensity: 0.38,
     });
-    this.disposableMaterials.push(floorMat);
+    this.disposableMaterials.push(this.floorMat);
 
-    const floorMesh = new THREE.Mesh(slabGeo, floorMat);
-    floorMesh.rotation.x = -Math.PI / 2;
-    floorMesh.position.set(0, TRACK_FLOOR_Y, trackCenterZ);
-    this.levelGroup.add(floorMesh);
+    this.floorMesh = new THREE.Mesh(slabGeo, this.floorMat);
+    this.floorMesh.rotation.x = -Math.PI / 2;
+    this.floorMesh.position.set(0, TRACK_FLOOR_Y, trackCenterZ);
+    this.levelGroup.add(this.floorMesh);
 
-    const ceilingMesh = new THREE.Mesh(slabGeo, floorMat);
-    ceilingMesh.rotation.x = Math.PI / 2;
-    ceilingMesh.position.set(0, TRACK_CEILING_Y, trackCenterZ);
-    this.levelGroup.add(ceilingMesh);
+    this.ceilingMesh = new THREE.Mesh(slabGeo, this.floorMat);
+    this.ceilingMesh.rotation.x = Math.PI / 2;
+    this.ceilingMesh.position.set(0, TRACK_CEILING_Y, trackCenterZ);
+    this.levelGroup.add(this.ceilingMesh);
 
-    // Glowing side boundary rails along floor and ceiling
+    // Glowing boundary prism rails along floor & ceiling
     const railGeo = new THREE.BoxGeometry(0.24, 0.24, trackLen);
-    const railMat = new THREE.MeshStandardMaterial({
+    this.railMat = new THREE.MeshStandardMaterial({
       color: theme.accentHex,
       emissive: theme.accentHex,
       emissiveIntensity: 1.5,
@@ -535,71 +624,59 @@ export class ZigzagEngine {
       metalness: 0.5,
     });
     this.disposableGeometries.push(railGeo);
-    this.disposableMaterials.push(railMat);
+    this.disposableMaterials.push(this.railMat);
 
+    this.railMeshes = [];
     for (const x of [-4.25, 4.25]) {
       for (const y of [TRACK_FLOOR_Y + 0.12, TRACK_CEILING_Y - 0.12]) {
-        const rail = new THREE.Mesh(railGeo, railMat);
+        const rail = new THREE.Mesh(railGeo, this.railMat);
         rail.position.set(x, y, trackCenterZ);
         this.levelGroup.add(rail);
+        this.railMeshes.push(rail);
       }
     }
 
-    // Parallax Cyber-Canyon Architecture (placed on +X background & deep abyss below floor)
+    // Parallax Cyber-Canyon Architecture
     this.buildParallaxCanyon(trackStartZ, trackEndZ, theme.accentHex, theme.hazardHex);
 
-    // Build Obstacles
     this.runtimeObstacles = [];
-    for (const obs of level.obstacles) {
-      let group: THREE.Group;
-      let subBoxes: Array<{ zMin: number; zMax: number; yMin: number; yMax: number }> | undefined;
-
-      if (obs.type === 'saw') {
-        group = createSawBlade(obs, theme.hazardHex);
-      } else if (obs.type === 'starMine') {
-        group = createStarMine(obs, theme.hazardHex);
-      } else if (obs.type === 'spikes') {
-        group = createSpikeCluster(obs, theme.hazardHex);
-      } else if (obs.type === 'block') {
-        group = createBlockObstacle(obs, theme.accentHex, theme.hazardHex);
-        subBoxes = getBlockSubBoxes(obs);
-      } else {
-        group = createSpeedGate(obs.z, obs.multiplier);
-      }
-
-      this.levelGroup.add(group);
-      this.runtimeObstacles.push({ data: obs, group, subBoxes, triggered: false });
-    }
-
-    // Build Collectibles
     this.runtimeCollectibles = [];
-    for (const item of level.collectibles) {
-      const group = item.type === 'gold' ? createGoldCube() : createStarCollectible();
-      group.position.set(0, item.y, item.z);
-      this.levelGroup.add(group);
-      this.runtimeCollectibles.push({ data: item, group, collected: false });
-    }
-
-    // Build Checkpoints
     this.runtimeCheckpoints = [];
-    for (const cp of level.checkpoints) {
-      const marker = createCheckpointMarker(cp.z, beamTex, theme.accentHex);
-      this.levelGroup.add(marker.group);
-      this.runtimeCheckpoints.push({
-        data: cp,
-        group: marker.group,
-        activate: marker.activate,
-        reset: marker.reset,
-        reached: false,
-      });
+    this.finishPortalRing = null;
+
+    if (isEndless) {
+      this.nextEndlessChunkIdx = 0;
+      this.nextEndlessZ = 34;
+      this.streamEndlessChunks(0);
+    } else {
+      // Build Fixed Course Obstacles
+      for (const obs of level.obstacles) {
+        this.addObstacleToScene(obs, theme.accentHex, theme.hazardHex);
+      }
+      // Build Fixed Collectibles
+      for (const item of level.collectibles) {
+        this.addCollectibleToScene(item);
+      }
+      // Build Checkpoints (disabled in hardcore mode!)
+      if (mode !== 'hardcore') {
+        for (const cp of level.checkpoints) {
+          const marker = createCheckpointMarker(cp.z, beamTex, theme.accentHex);
+          this.levelGroup.add(marker.group);
+          this.runtimeCheckpoints.push({
+            data: cp,
+            group: marker.group,
+            activate: marker.activate,
+            reset: marker.reset,
+            reached: false,
+          });
+        }
+      }
+      // Build Finish Portal
+      const portal = createFinishPortal(level.length, checkerTex, theme.accentHex);
+      this.levelGroup.add(portal.group);
+      this.finishPortalRing = portal.ring;
     }
 
-    // Build Finish Portal
-    const portal = createFinishPortal(level.length, checkerTex, theme.accentHex);
-    this.levelGroup.add(portal.group);
-    this.finishPortalRing = portal.ring;
-
-    // Reset player state for new level
     this.attempts = 1;
     this.score = 0;
     this.starsEarned = [false, false, false];
@@ -608,33 +685,123 @@ export class ZigzagEngine {
     this.respawnAtCheckpoint(true);
   }
 
+  private addObstacleToScene(obs: LevelObstacle, accentHex: number, hazardHex: number): void {
+    let group: THREE.Group;
+    let subBoxes: Array<{ zMin: number; zMax: number; yMin: number; yMax: number }> | undefined;
+
+    if (obs.type === 'saw') {
+      group = createSawBlade(obs, hazardHex);
+    } else if (obs.type === 'starMine') {
+      group = createStarMine(obs, hazardHex);
+    } else if (obs.type === 'spikes') {
+      group = createSpikeCluster(obs, hazardHex);
+    } else if (obs.type === 'block') {
+      group = createBlockObstacle(obs, accentHex, hazardHex);
+      subBoxes = getBlockSubBoxes(obs);
+    } else {
+      group = createSpeedGate(obs.z, obs.multiplier);
+    }
+
+    this.levelGroup.add(group);
+    this.runtimeObstacles.push({
+      data: obs,
+      group,
+      subBoxes,
+      triggered: false,
+      destroyed: false,
+    });
+  }
+
+  private addCollectibleToScene(item: CollectibleItem): void {
+    const group = item.type === 'gold' ? createGoldCube() : createStarCollectible();
+    group.position.set(0, item.y, item.z);
+    this.levelGroup.add(group);
+    this.runtimeCollectibles.push({ data: item, group, collected: false });
+  }
+
+  private disposeGroupResources(group: THREE.Group): void {
+    this.levelGroup.remove(group);
+    group.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        const m = obj as THREE.Mesh;
+        m.geometry?.dispose();
+        if (Array.isArray(m.material)) m.material.forEach((mat) => mat.dispose());
+        else m.material?.dispose();
+      }
+    });
+  }
+
+  private streamEndlessChunks(currentZ: number): void {
+    const horizonZ = currentZ + 170;
+    while (this.nextEndlessZ < horizonZ) {
+      const { obstacles, collectibles } = generateEndlessChunk(
+        this.nextEndlessChunkIdx,
+        this.nextEndlessZ
+      );
+      for (const obs of obstacles) {
+        this.addObstacleToScene(
+          obs,
+          this.currentLevel.theme.accentHex,
+          this.currentLevel.theme.hazardHex
+        );
+      }
+      for (const item of collectibles) {
+        this.addCollectibleToScene(item);
+      }
+      this.nextEndlessChunkIdx += 1;
+      this.nextEndlessZ += ENDLESS_CHUNK_LENGTH;
+    }
+
+    // Recycle objects well behind the camera
+    const cullZ = currentZ - 42;
+    this.runtimeObstacles = this.runtimeObstacles.filter((obs) => {
+      const obsEnd = obs.data.type === 'spikes' ? obs.data.zEnd : obs.data.z + 6;
+      if (obsEnd < cullZ) {
+        this.disposeGroupResources(obs.group);
+        return false;
+      }
+      return true;
+    });
+
+    this.runtimeCollectibles = this.runtimeCollectibles.filter((item) => {
+      if (item.data.z < cullZ) {
+        this.disposeGroupResources(item.group);
+        return false;
+      }
+      return true;
+    });
+  }
+
   private buildParallaxCanyon(
     zStart: number,
     zEnd: number,
     accentHex: number,
     hazardHex: number
   ): void {
-    // Background monolith towers on +X (never occlude camera on -X)
     const towerCount = Math.floor((zEnd - zStart) / 9);
     const towerGeo = new THREE.BoxGeometry(1, 1, 1);
-    const towerMat = new THREE.MeshStandardMaterial({
+    this.towerMat = new THREE.MeshStandardMaterial({
       color: 0x0b122b,
       metalness: 0.8,
       roughness: 0.35,
       emissive: accentHex,
-      emissiveIntensity: 0.14,
+      emissiveIntensity: 0.16,
     });
     this.disposableGeometries.push(towerGeo);
-    this.disposableMaterials.push(towerMat);
+    this.disposableMaterials.push(this.towerMat);
 
-    const towers = new THREE.InstancedMesh(towerGeo, towerMat, towerCount);
+    const towers = new THREE.InstancedMesh(towerGeo, this.towerMat, towerCount);
+    towers.frustumCulled = false;
+    this.towerInstances = [];
     let idx = 0;
     for (let i = 0; i < towerCount; i++) {
       const z = zStart + i * 9 + ((i * 7) % 5);
       const x = 11 + ((i * 13) % 24);
       const h = 14 + ((i * 19) % 26);
       const w = 2.4 + ((i * 3) % 4);
-      _dummy.position.set(x, h * 0.5 - 12, z);
+      const y = h * 0.5 - 12;
+      this.towerInstances.push({ x, y, z, w, h });
+      _dummy.position.set(x, y, z);
       _dummy.rotation.set(0, 0, 0);
       _dummy.scale.set(w, h, w);
       _dummy.updateMatrix();
@@ -642,26 +809,28 @@ export class ZigzagEngine {
     }
     towers.instanceMatrix.needsUpdate = true;
     towers.computeBoundingSphere();
+    this.parallaxTowers = towers;
     this.levelGroup.add(towers);
 
-    // Floating geometric accent octahedrons high above and deep below trench
     const floatCount = Math.floor((zEnd - zStart) / 11);
     const floatGeo = new THREE.OctahedronGeometry(0.95, 0);
-    const floatMat = new THREE.MeshStandardMaterial({
+    this.floatMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       emissive: hazardHex,
-      emissiveIntensity: 0.5,
+      emissiveIntensity: 0.55,
       metalness: 0.7,
       roughness: 0.25,
     });
     this.disposableGeometries.push(floatGeo);
-    this.disposableMaterials.push(floatMat);
+    this.disposableMaterials.push(this.floatMat);
 
-    const floaters = new THREE.InstancedMesh(floatGeo, floatMat, floatCount);
+    const floaters = new THREE.InstancedMesh(floatGeo, this.floatMat, floatCount);
+    floaters.frustumCulled = false;
     floaters.instanceColor = new THREE.InstancedBufferAttribute(
       new Float32Array(floatCount * 3),
       3
     );
+    this.floaterInstances = [];
 
     for (let i = 0; i < floatCount; i++) {
       const z = zStart + i * 11;
@@ -669,9 +838,12 @@ export class ZigzagEngine {
       const x = isBelow ? ((i * 11) % 24) - 10 : 9 + ((i * 17) % 18);
       const y = isBelow ? -4 - ((i * 5) % 8) : 16 + ((i * 7) % 12);
       const s = 0.65 + ((i * 3) % 5) * 0.22;
+      const rx = i * 0.4;
+      const ry = i * 0.7;
 
+      this.floaterInstances.push({ x, y, z, s, rx, ry });
       _dummy.position.set(x, y, z);
-      _dummy.rotation.set(i * 0.4, i * 0.7, 0);
+      _dummy.rotation.set(rx, ry, 0);
       _dummy.scale.setScalar(s);
       _dummy.updateMatrix();
       floaters.setMatrixAt(i, _dummy.matrix);
@@ -682,6 +854,7 @@ export class ZigzagEngine {
     floaters.instanceMatrix.needsUpdate = true;
     floaters.instanceColor.needsUpdate = true;
     floaters.computeBoundingSphere();
+    this.parallaxFloaters = floaters;
     this.levelGroup.add(floaters);
   }
 
@@ -707,6 +880,72 @@ export class ZigzagEngine {
     this.disposableTextures = [];
     this.disposableGeometries = [];
     this.disposableMaterials = [];
+    this.floorMat = null;
+    this.railMat = null;
+    this.towerMat = null;
+    this.floatMat = null;
+    this.floorMesh = null;
+    this.ceilingMesh = null;
+    this.railMeshes = [];
+    this.parallaxTowers = null;
+    this.parallaxFloaters = null;
+  }
+
+  private updateDynamicEnvironmentColors(dt: number, intensity: number): void {
+    this.smoothedIntensity = THREE.MathUtils.damp(this.smoothedIntensity, intensity, 10, dt);
+    const speedExcess = Math.max(0, this.activeSpeedMultiplier - 1.0);
+    const speedFactor = this.activeSpeedMultiplier;
+
+    // Continuous subtle hue drift accelerated by speed multiplier + reactive intensity shift
+    this.huePhase = (this.huePhase + dt * (0.04 + speedExcess * 0.28)) % 1.0;
+    const reactiveHueShift =
+      (this.huePhase * 0.22 + speedExcess * 0.45 + this.smoothedIntensity * 0.08) % 1.0;
+
+    const gridHue = (this.baseAccentHue + reactiveHueShift) % 1.0;
+    const prismHue = (this.baseAccentHue + reactiveHueShift + 0.08) % 1.0;
+    const towerHue = (this.baseHazardHue + reactiveHueShift * 0.7) % 1.0;
+
+    if (this.floorMat) {
+      this.floorMat.emissive.setHSL(
+        gridHue,
+        0.9,
+        0.48 + this.smoothedIntensity * 0.14
+      );
+      this.floorMat.emissiveIntensity =
+        0.3 + this.smoothedIntensity * 0.65 + speedExcess * 0.45;
+    }
+
+    if (this.railMat) {
+      const l = 0.52 + this.smoothedIntensity * 0.16;
+      this.railMat.color.setHSL(prismHue, 0.95, l);
+      this.railMat.emissive.setHSL(prismHue, 0.95, l);
+      this.railMat.emissiveIntensity =
+        1.25 + this.smoothedIntensity * 1.45 + speedExcess * 0.9;
+    }
+
+    if (this.towerMat) {
+      this.towerMat.emissive.setHSL(gridHue, 0.85, 0.45);
+      this.towerMat.emissiveIntensity = 0.12 + this.smoothedIntensity * 0.28;
+    }
+
+    if (this.floatMat) {
+      this.floatMat.emissive.setHSL(towerHue, 0.9, 0.52);
+      this.floatMat.emissiveIntensity =
+        0.45 + this.smoothedIntensity * 0.85 + (speedFactor > 1.2 ? 0.35 : 0);
+    }
+
+    // Subtle atmospheric fog tint shift during overdrive or chrono slow
+    if (this.scene.fog && this.scene.background instanceof THREE.Color) {
+      this.baseFogColor.getHSL(_hsl);
+      const targetHue =
+        this.powerActiveRemaining > 0 && this.currentSkin.powerType === 'slowmo'
+          ? 0.76
+          : (_hsl.h + reactiveHueShift * 0.18) % 1.0;
+      const targetLight = Math.min(0.14, _hsl.l + this.smoothedIntensity * 0.035);
+      _color.setHSL(targetHue, Math.min(0.85, _hsl.s + 0.1), targetLight);
+      this.scene.background.lerp(_color, Math.min(1, dt * 5));
+      (this.scene.fog as THREE.FogExp2).color.copy(this.scene.background);
+    }
   }
 
   private spawnBurst(x: number, y: number, z: number, count: number, colorHex: number, speed = 8): void {
@@ -772,7 +1011,6 @@ export class ZigzagEngine {
   }
 
   private updateTrailGeometry(): void {
-    // Prune vertices far behind playerZ - 58
     while (
       this.trailVertices.length > 2 &&
       this.trailVertices[1].z < this.playerZ - 58
@@ -796,7 +1034,6 @@ export class ZigzagEngine {
       const pt = i < ptsCount ? this.trailVertices[i] : { z: this.playerZ, y: this.playerY };
       const idx = i * 6;
 
-      // Strip A: horizontal width along X
       this.trailPositionsA[idx] = -halfW;
       this.trailPositionsA[idx + 1] = pt.y;
       this.trailPositionsA[idx + 2] = pt.z;
@@ -805,7 +1042,6 @@ export class ZigzagEngine {
       this.trailPositionsA[idx + 4] = pt.y;
       this.trailPositionsA[idx + 5] = pt.z;
 
-      // Strip B: vertical thickness along Y
       this.trailPositionsB[idx] = 0;
       this.trailPositionsB[idx + 1] = pt.y - halfH;
       this.trailPositionsB[idx + 2] = pt.z;
@@ -814,7 +1050,6 @@ export class ZigzagEngine {
       this.trailPositionsB[idx + 4] = pt.y + halfH;
       this.trailPositionsB[idx + 5] = pt.z;
 
-      // White-hot center core line
       const lIdx = i * 3;
       this.trailLinePositions[lIdx] = 0;
       this.trailLinePositions[lIdx + 1] = pt.y;
@@ -832,24 +1067,25 @@ export class ZigzagEngine {
     this.trailLine.geometry.setDrawRange(0, totalPts);
   }
 
-  private checkHazardCollision(z: number, y: number): boolean {
+  private checkHazardCollision(z: number, y: number): RuntimeObstacle | null {
     const r = HITBOX_RADIUS;
     const rSq = r * r;
 
     for (const obs of this.runtimeObstacles) {
+      if (obs.destroyed) continue;
       const data = obs.data;
       if (data.type === 'saw') {
         if (Math.abs(z - data.z) > data.radius + r) continue;
         const dz = z - data.z;
         const dy = y - data.y;
         const effR = data.radius * 0.78 + r;
-        if (dz * dz + dy * dy < effR * effR) return true;
+        if (dz * dz + dy * dy < effR * effR) return obs;
       } else if (data.type === 'starMine') {
         if (Math.abs(z - data.z) > data.radius + r) continue;
         const dz = z - data.z;
         const dy = y - data.y;
         const effR = data.radius * 0.68 + r;
-        if (dz * dz + dy * dy < effR * effR) return true;
+        if (dz * dz + dy * dy < effR * effR) return obs;
       } else if (data.type === 'block' && obs.subBoxes) {
         if (Math.abs(z - data.z) > data.width * 0.6 + r) continue;
         for (const b of obs.subBoxes) {
@@ -858,33 +1094,114 @@ export class ZigzagEngine {
           const cy = THREE.MathUtils.clamp(y, b.yMin + inset, b.yMax - inset);
           const dz = z - cz;
           const dy = y - cy;
-          if (dz * dz + dy * dy < rSq) return true;
+          if (dz * dz + dy * dy < rSq) return obs;
         }
       } else if (data.type === 'spikes') {
         if (z < data.zStart - r * 0.5 || z > data.zEnd + r * 0.5) continue;
         const forgivingH = data.height * 0.78;
         if (data.placement === 'floor') {
-          if (y - r < forgivingH) return true;
+          if (y - r < forgivingH) return obs;
         } else {
-          if (y + r > TRACK_CEILING_Y - forgivingH) return true;
+          if (y + r > TRACK_CEILING_Y - forgivingH) return obs;
         }
       }
     }
 
-    return false;
+    return null;
+  }
+
+  private updateSpecialPowerState(dt: number): void {
+    const power = this.currentSkin.powerType;
+
+    if (this.powerActiveRemaining > 0) {
+      this.powerActiveRemaining = Math.max(0, this.powerActiveRemaining - dt);
+      if (this.powerActiveRemaining === 0) {
+        this.shieldActive = false;
+      }
+    } else {
+      // Passive recharge during gameplay
+      this.powerCharge = Math.min(100, this.powerCharge + dt * 7.0);
+    }
+
+    if (this.invulnTimer > 0) {
+      this.invulnTimer = Math.max(0, this.invulnTimer - dt);
+    }
+
+    const isPowerActive = this.powerActiveRemaining > 0;
+    this.craft.shieldMesh.visible =
+      (isPowerActive && (power === 'shield' || power === 'phase')) || this.invulnTimer > 0;
+    this.craft.auraRing.visible =
+      isPowerActive && (power === 'magnet' || power === 'overdrive');
+    this.craft.laserBeam.visible = isPowerActive && power === 'breaker';
+
+    if (this.craft.shieldMesh.visible) {
+      this.craft.shieldMesh.rotation.y += dt * 2.5;
+      this.craft.shieldMesh.rotation.x += dt * 1.4;
+    }
+    if (this.craft.auraRing.visible) {
+      this.craft.auraRing.rotation.x += dt * 5.0;
+      const s = 1.0 + Math.sin(this.totalElapsed * 12) * 0.12;
+      this.craft.auraRing.scale.setScalar(s);
+    }
+
+    // Laser Breaker destroys hazards directly in front of the craft
+    if (isPowerActive && power === 'breaker') {
+      const beamEndZ = this.playerZ + 13.0;
+      for (const obs of this.runtimeObstacles) {
+        if (obs.destroyed) continue;
+        const d = obs.data;
+        if (d.type === 'saw' || d.type === 'starMine') {
+          if (d.z > this.playerZ && d.z <= beamEndZ && Math.abs(d.y - this.playerY) < d.radius + 0.9) {
+            obs.destroyed = true;
+            obs.group.visible = false;
+            this.score += 75;
+            this.spawnBurst(0, d.y, d.z, 20, 0xfb7185, 11);
+            soundEngine.playCollectGold(4);
+          }
+        } else if (d.type === 'block') {
+          if (
+            d.z > this.playerZ &&
+            d.z <= beamEndZ &&
+            Math.abs(d.y - this.playerY) < d.height * 0.5 + 0.65
+          ) {
+            obs.destroyed = true;
+            obs.group.visible = false;
+            this.score += 75;
+            this.spawnBurst(0, d.y, d.z, 22, 0xfb7185, 11);
+            soundEngine.playCollectGold(4);
+          }
+        }
+      }
+    }
   }
 
   private stepPhysics(dt: number): void {
     const MAX_STEP = 0.01;
     let remaining = dt;
 
+    const power = this.currentSkin.powerType;
+    const isPowerActive = this.powerActiveRemaining > 0;
+    const modeBaseMult = this.gameMode === 'hardcore' ? 1.15 : 1.0;
+    const slowMoFactor = isPowerActive && power === 'slowmo' ? 0.62 : 1.0;
+    const endlessRamp =
+      this.gameMode === 'endless' ? Math.min(0.4, this.playerZ / 1600) : 0;
+    const scoreMult =
+      (this.gameMode === 'hardcore' ? 2.0 : 1.0) *
+      (isPowerActive && power === 'overdrive' ? 2.5 : 1.0);
+
+    const climbInput = this.gameMode === 'inverted' ? !this.isHolding : this.isHolding;
+
     while (remaining > 0 && this.phase === 'playing') {
       const step = Math.min(remaining, MAX_STEP);
       remaining -= step;
 
-      const speed = this.currentLevel.baseSpeed * this.activeSpeedMultiplier;
+      const speed =
+        this.currentLevel.baseSpeed *
+        (this.activeSpeedMultiplier + endlessRamp) *
+        modeBaseMult *
+        slowMoFactor;
       const dz = speed * step;
-      const dy = (this.isHolding ? 1 : -1) * speed * WAVE_SLOPE * step;
+      const dy = (climbInput ? 1 : -1) * speed * WAVE_SLOPE * step;
 
       this.playerZ += dz;
       let nextY = this.playerY + dy;
@@ -920,7 +1237,7 @@ export class ZigzagEngine {
         }
       }
 
-      // Checkpoints
+      // Checkpoints (Classic & Inverted modes)
       for (const cp of this.runtimeCheckpoints) {
         if (!cp.reached && this.playerZ >= cp.data.z) {
           cp.reached = true;
@@ -931,23 +1248,40 @@ export class ZigzagEngine {
         }
       }
 
-      // Collectibles
+      // Collectibles (with Magnet Surge / Overdrive magnetic pull)
+      const hasMagnet = isPowerActive && (power === 'magnet' || power === 'overdrive');
+      const magnetRange = power === 'magnet' ? 7.5 : 5.5;
       const pSq = PICKUP_RADIUS * PICKUP_RADIUS;
+
       for (const item of this.runtimeCollectibles) {
         if (item.collected) continue;
         const dZ = this.playerZ - item.data.z;
-        if (Math.abs(dZ) > PICKUP_RADIUS + 0.5) continue;
         const dY = this.playerY - item.data.y;
-        if (dZ * dZ + dY * dY <= pSq) {
+        const distSq = dZ * dZ + dY * dY;
+
+        if (hasMagnet && distSq < magnetRange * magnetRange) {
+          const pull = Math.min(1, step * 11);
+          item.data.z = THREE.MathUtils.lerp(item.data.z, this.playerZ, pull);
+          item.data.y = THREE.MathUtils.lerp(item.data.y, this.playerY, pull);
+          item.group.position.set(0, item.data.y, item.data.z);
+        } else if (Math.abs(dZ) > PICKUP_RADIUS + 0.5) {
+          continue;
+        }
+
+        const curDz = this.playerZ - item.data.z;
+        const curDy = this.playerY - item.data.y;
+        if (curDz * curDz + curDy * curDy <= pSq) {
           item.collected = true;
           item.group.visible = false;
-          this.score += item.data.value;
+          this.score += Math.round(item.data.value * scoreMult);
           if (item.data.type === 'gold') {
+            this.powerCharge = Math.min(100, this.powerCharge + 14);
             soundEngine.playCollectGold(this.goldCombo);
             this.goldCombo += 1;
             this.goldComboTimer = 0.75;
             this.spawnBurst(0, item.data.y, item.data.z, 7, 0xfacc15, 6.5);
           } else {
+            this.powerCharge = Math.min(100, this.powerCharge + 35);
             if (item.data.starIndex !== undefined) {
               this.starsEarned[item.data.starIndex] = true;
             }
@@ -958,16 +1292,82 @@ export class ZigzagEngine {
         }
       }
 
-      // Hazards
-      if (this.checkHazardCollision(this.playerZ, this.playerY)) {
-        this.triggerCrash();
-        return;
+      // Hazards (skipped if Phase Blink or temporary shield post-hit invuln is active)
+      const isIntangible =
+        (isPowerActive && power === 'phase') || this.invulnTimer > 0;
+      if (!isIntangible) {
+        const hitObs = this.checkHazardCollision(this.playerZ, this.playerY);
+        if (hitObs) {
+          if (this.shieldActive) {
+            // Consume Phase Shield & absorb impact!
+            this.shieldActive = false;
+            this.powerActiveRemaining = 0;
+            this.invulnTimer = 1.15;
+            this.shakeIntensity = 0.45;
+            if (hitObs.data.type !== 'spikes') {
+              hitObs.destroyed = true;
+              hitObs.group.visible = false;
+            }
+            this.spawnBurst(0, this.playerY, this.playerZ, 26, 0x22d3ee, 11);
+            soundEngine.playShieldPop();
+            this.emitHud(true);
+          } else {
+            this.triggerCrash();
+            return;
+          }
+        }
       }
 
-      // Finish portal
-      if (this.playerZ >= this.currentLevel.length) {
+      // Finish portal (non-endless modes)
+      if (this.gameMode !== 'endless' && this.playerZ >= this.currentLevel.length) {
         this.triggerComplete();
         return;
+      }
+    }
+
+    // Stream & keep endless trench aligned to playerZ
+    if (this.gameMode === 'endless') {
+      this.streamEndlessChunks(this.playerZ);
+      const tileOffset = Math.floor(this.playerZ / this.endlessGridTileUnit) * this.endlessGridTileUnit;
+      const slabCenterZ = tileOffset + (-24 + ENDLESS_SLAB_LEN) * 0.5;
+      if (this.floorMesh) this.floorMesh.position.z = slabCenterZ;
+      if (this.ceilingMesh) this.ceilingMesh.position.z = slabCenterZ;
+      for (const rail of this.railMeshes) {
+        rail.position.z = slabCenterZ;
+      }
+
+      if (this.parallaxTowers) {
+        let dirtyTowers = false;
+        for (let i = 0; i < this.towerInstances.length; i++) {
+          const t = this.towerInstances[i];
+          if (t.z < this.playerZ - 32) {
+            t.z += this.endlessSpanZ;
+            _dummy.position.set(t.x, t.y, t.z);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(t.w, t.h, t.w);
+            _dummy.updateMatrix();
+            this.parallaxTowers.setMatrixAt(i, _dummy.matrix);
+            dirtyTowers = true;
+          }
+        }
+        if (dirtyTowers) this.parallaxTowers.instanceMatrix.needsUpdate = true;
+      }
+
+      if (this.parallaxFloaters) {
+        let dirtyFloaters = false;
+        for (let i = 0; i < this.floaterInstances.length; i++) {
+          const f = this.floaterInstances[i];
+          if (f.z < this.playerZ - 32) {
+            f.z += this.endlessSpanZ;
+            _dummy.position.set(f.x, f.y, f.z);
+            _dummy.rotation.set(f.rx, f.ry, 0);
+            _dummy.scale.setScalar(f.s);
+            _dummy.updateMatrix();
+            this.parallaxFloaters.setMatrixAt(i, _dummy.matrix);
+            dirtyFloaters = true;
+          }
+        }
+        if (dirtyFloaters) this.parallaxFloaters.instanceMatrix.needsUpdate = true;
       }
     }
   }
@@ -977,6 +1377,9 @@ export class ZigzagEngine {
     this.crashTimer = 0;
     this.shakeIntensity = 0.85;
     this.craft.group.visible = false;
+    this.craft.shieldMesh.visible = false;
+    this.craft.auraRing.visible = false;
+    this.craft.laserBeam.visible = false;
     this.spawnBurst(0, this.playerY, this.playerZ, 34, this.currentSkin.coreColor, 13);
     this.spawnBurst(0, this.playerY, this.playerZ, 16, 0xf43f5e, 10);
     soundEngine.playCrash();
@@ -1023,14 +1426,17 @@ export class ZigzagEngine {
     _camCurrentLook.y = THREE.MathUtils.damp(_camCurrentLook.y, _camTargetLook.y, dampLambda, dt);
     _camCurrentLook.z = THREE.MathUtils.damp(_camCurrentLook.z, _camTargetLook.z, 18, dt);
 
-    // Subtle speed FOV pulse
-    const targetFov = this.phase === 'playing' && this.activeSpeedMultiplier > 1.15 ? 57 : 52;
+    const targetFov =
+      this.phase === 'playing' && this.activeSpeedMultiplier > 1.15
+        ? 57
+        : this.powerActiveRemaining > 0 && this.currentSkin.powerType === 'slowmo'
+          ? 48
+          : 52;
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 6, dt);
       this.camera.updateProjectionMatrix();
     }
 
-    // Apply decaying screen shake
     if (this.shakeIntensity > 0.005) {
       const sx = (Math.random() - 0.5) * this.shakeIntensity;
       const sy = (Math.random() - 0.5) * this.shakeIntensity;
@@ -1043,7 +1449,6 @@ export class ZigzagEngine {
   }
 
   private animateProps(dt: number): void {
-    // Rotate craft gyro rings & thruster flicker
     this.craft.outerRing.rotation.z += dt * 3.5;
     this.craft.innerRing.rotation.x += dt * 4.5;
     this.craft.innerRing.rotation.y += dt * 2.2;
@@ -1051,8 +1456,8 @@ export class ZigzagEngine {
     const pulse = 0.88 + Math.sin(this.totalElapsed * 24) * 0.14;
     this.craft.thrusterCone.scale.set(pulse, pulse, this.phase === 'playing' ? 1.25 : 0.8);
 
-    // Rotate saws and star mines
     for (const obs of this.runtimeObstacles) {
+      if (obs.destroyed) continue;
       if (obs.data.type === 'saw') {
         obs.group.rotation.x += (obs.data.spinSpeed ?? 3.5) * dt;
       } else if (obs.data.type === 'starMine') {
@@ -1060,7 +1465,6 @@ export class ZigzagEngine {
       }
     }
 
-    // Rotate collectibles smoothly
     for (const item of this.runtimeCollectibles) {
       if (item.collected) continue;
       if (item.data.type === 'gold') {
@@ -1072,27 +1476,36 @@ export class ZigzagEngine {
       }
     }
 
-    // Rotate finish portal ring
     if (this.finishPortalRing) {
       this.finishPortalRing.rotation.z += dt * 1.4;
     }
   }
 
   private buildSnapshot(): HudSnapshot {
-    const rawPct = (this.playerZ / this.currentLevel.length) * 100;
+    const rawPct =
+      this.gameMode === 'endless'
+        ? 0
+        : (this.playerZ / this.currentLevel.length) * 100;
     const percent = Math.min(100, Math.max(0, Math.floor(rawPct)));
     const cpPct = this.lastCheckpoint
       ? Math.floor((this.lastCheckpoint.z / this.currentLevel.length) * 100)
       : 0;
     return {
       phase: this.phase,
+      mode: this.gameMode,
       percent,
+      distance: Math.floor(this.playerZ),
       score: this.score,
       stars: [...this.starsEarned] as [boolean, boolean, boolean],
       attempts: this.attempts,
       activeSpeedMultiplier: this.activeSpeedMultiplier,
       hasCheckpoint: this.lastCheckpoint !== null,
       checkpointPercent: cpPct,
+      powerCharge: Math.floor(this.powerCharge),
+      powerActiveRemaining: Number(this.powerActiveRemaining.toFixed(1)),
+      powerDuration: this.currentSkin.powerDuration,
+      shieldActive: this.shieldActive,
+      musicIntensity: this.currentMusicIntensity,
     };
   }
 
@@ -1119,18 +1532,32 @@ export class ZigzagEngine {
         if (this.goldComboTimer <= 0) this.goldCombo = 0;
       }
 
+      // Step synthesized synthwave pulse & update reactive grid/prism colors
+      const endlessBoost =
+        this.gameMode === 'endless' ? Math.min(0.4, this.playerZ / 1600) : 0;
+      const effectiveSpeed =
+        this.activeSpeedMultiplier + endlessBoost + (this.gameMode === 'hardcore' ? 0.15 : 0);
+      this.currentMusicIntensity = soundEngine.stepMusicPulse(
+        dt,
+        this.phase === 'playing',
+        effectiveSpeed
+      );
+      this.updateDynamicEnvironmentColors(dt, this.currentMusicIntensity);
+
       if (this.phase === 'ready') {
         const bob = Math.sin(this.totalElapsed * 3.5) * 0.14;
         this.craft.group.position.set(0, this.playerY + bob, this.playerZ);
         this.craft.group.rotation.x = THREE.MathUtils.damp(this.craft.group.rotation.x, 0, 10, dt);
       } else if (this.phase === 'playing') {
+        this.updateSpecialPowerState(dt);
         this.stepPhysics(dt);
 
-        // Update craft transform & 42° pitch tilt
+        const climbInput =
+          this.gameMode === 'inverted' ? !this.isHolding : this.isHolding;
         const targetPitch =
           this.railState !== 'free'
             ? 0
-            : this.isHolding
+            : climbInput
               ? -(42 * Math.PI) / 180
               : (42 * Math.PI) / 180;
         this.craftPitch = THREE.MathUtils.damp(this.craftPitch, targetPitch, 28, dt);
@@ -1143,7 +1570,11 @@ export class ZigzagEngine {
         this.crashTimer += dt;
         if (this.crashTimer >= 0.72) {
           this.attempts += 1;
-          this.respawnAtCheckpoint(false);
+          if (this.gameMode === 'endless') {
+            this.loadLevel(this.currentLevel, 'endless');
+          } else {
+            this.respawnAtCheckpoint(this.gameMode === 'hardcore');
+          }
         }
       }
 

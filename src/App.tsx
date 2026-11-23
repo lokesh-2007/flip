@@ -1,24 +1,28 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Zap } from 'lucide-react';
 import { soundEngine } from './audio/soundEngine';
 import { LevelCompleteModal } from './components/LevelCompleteModal';
 import { LevelSelectModal } from './components/LevelSelectModal';
 import { TopHud } from './components/TopHud';
-import { CRAFT_SKINS, LEVELS } from './levels/levelData';
+import { CRAFT_SKINS, ENDLESS_LEVEL_BASE, LEVELS } from './levels/levelData';
 import { ZigzagEngine } from './three/ZigzagEngine';
 import {
   CameraMode,
   CraftSkin,
+  GameMode,
   HudSnapshot,
   LevelDefinition,
   LevelProgressRecord,
 } from './types/game';
 
-const PROGRESS_STORAGE_KEY = 'cyber_trench_progress_v1';
+const PROGRESS_STORAGE_KEY = 'cyber_trench_progress_v2';
 
 interface SavedStorageData {
   progressMap: Record<string, LevelProgressRecord>;
   totalGold: number;
   selectedSkinId: string;
+  selectedMode: GameMode;
+  endlessBest: number;
 }
 
 function loadSavedData(): SavedStorageData {
@@ -30,6 +34,8 @@ function loadSavedData(): SavedStorageData {
         progressMap: parsed.progressMap ?? {},
         totalGold: typeof parsed.totalGold === 'number' ? parsed.totalGold : 0,
         selectedSkinId: parsed.selectedSkinId ?? CRAFT_SKINS[0].id,
+        selectedMode: parsed.selectedMode ?? 'classic',
+        endlessBest: typeof parsed.endlessBest === 'number' ? parsed.endlessBest : 0,
       };
     }
   } catch {
@@ -39,6 +45,8 @@ function loadSavedData(): SavedStorageData {
     progressMap: {},
     totalGold: 0,
     selectedSkinId: CRAFT_SKINS[0].id,
+    selectedMode: 'classic',
+    endlessBest: 0,
   };
 }
 
@@ -49,12 +57,14 @@ export default function App() {
   const engineRef = useRef<ZigzagEngine | null>(null);
 
   const [currentLevelIdx, setCurrentLevelIdx] = useState(0);
-  const currentLevel = LEVELS[currentLevelIdx];
+  const [gameMode, setGameMode] = useState<GameMode>(initialSaved.selectedMode);
+  const currentLevel = gameMode === 'endless' ? ENDLESS_LEVEL_BASE : LEVELS[currentLevelIdx];
 
   const [progressMap, setProgressMap] = useState<Record<string, LevelProgressRecord>>(
     initialSaved.progressMap
   );
   const [totalGold, setTotalGold] = useState<number>(initialSaved.totalGold);
+  const [endlessBest, setEndlessBest] = useState<number>(initialSaved.endlessBest);
   const [selectedSkinId, setSelectedSkinId] = useState<string>(initialSaved.selectedSkinId);
 
   const [muted, setMuted] = useState<boolean>(() => soundEngine.isMuted());
@@ -64,19 +74,27 @@ export default function App() {
 
   const [hud, setHud] = useState<HudSnapshot>({
     phase: 'ready',
+    mode: initialSaved.selectedMode,
     percent: 0,
+    distance: 0,
     score: 0,
     stars: [false, false, false],
     attempts: 1,
     activeSpeedMultiplier: 1.0,
     hasCheckpoint: false,
     checkpointPercent: 0,
+    powerCharge: 100,
+    powerActiveRemaining: 0,
+    powerDuration: CRAFT_SKINS[0].powerDuration,
+    shieldActive: false,
+    musicIntensity: 0.15,
   });
 
-  // Track active pointer/key inputs so releasing one doesn't drop another
   const activeInputsRef = useRef<Set<string>>(new Set());
   const currentLevelRef = useRef<LevelDefinition>(currentLevel);
   currentLevelRef.current = currentLevel;
+  const gameModeRef = useRef<GameMode>(gameMode);
+  gameModeRef.current = gameMode;
 
   const selectedSkin = useMemo(
     () => CRAFT_SKINS.find((s) => s.id === selectedSkinId) ?? CRAFT_SKINS[0],
@@ -90,15 +108,21 @@ export default function App() {
         progressMap,
         totalGold,
         selectedSkinId,
+        selectedMode: gameMode,
+        endlessBest,
       };
       localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(payload));
     } catch {
       // Ignore storage quota errors
     }
-  }, [progressMap, totalGold, selectedSkinId]);
+  }, [progressMap, totalGold, selectedSkinId, gameMode, endlessBest]);
 
   const updateProgressRecord = useCallback(
     (levelId: string, snapshot: HudSnapshot, isCompleted: boolean) => {
+      if (snapshot.mode === 'endless') {
+        setEndlessBest((prev) => Math.max(prev, snapshot.distance));
+        return;
+      }
       setProgressMap((prev) => {
         const existing = prev[levelId] ?? {
           bestPercent: 0,
@@ -130,20 +154,29 @@ export default function App() {
     const container = canvasMountRef.current;
     if (!container) return;
 
-    const engine = new ZigzagEngine(container, currentLevelRef.current, selectedSkin, {
-      onHudUpdate: (snapshot) => {
-        setHud(snapshot);
-        if (snapshot.phase === 'crashed') {
-          updateProgressRecord(currentLevelRef.current.id, snapshot, false);
-        }
-      },
-      onLevelComplete: (snapshot) => {
-        setHud(snapshot);
-        updateProgressRecord(currentLevelRef.current.id, snapshot, true);
-        setTotalGold((prev) => prev + snapshot.score);
-        setShowCompleteModal(true);
-      },
-    });
+    const engine = new ZigzagEngine(
+      container,
+      currentLevelRef.current,
+      selectedSkin,
+      gameModeRef.current,
+      {
+        onHudUpdate: (snapshot) => {
+          setHud(snapshot);
+          if (snapshot.phase === 'crashed') {
+            updateProgressRecord(currentLevelRef.current.id, snapshot, false);
+            if (snapshot.mode === 'endless' && snapshot.score > 0) {
+              setTotalGold((prev) => prev + snapshot.score);
+            }
+          }
+        },
+        onLevelComplete: (snapshot) => {
+          setHud(snapshot);
+          updateProgressRecord(currentLevelRef.current.id, snapshot, true);
+          setTotalGold((prev) => prev + snapshot.score);
+          setShowCompleteModal(true);
+        },
+      }
+    );
 
     engineRef.current = engine;
 
@@ -154,12 +187,10 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Pause engine while Level Select modal is open
   useEffect(() => {
     engineRef.current?.setPaused(showLevelSelect);
   }, [showLevelSelect]);
 
-  // Sync skin updates
   useEffect(() => {
     engineRef.current?.setSkin(selectedSkin);
   }, [selectedSkin]);
@@ -192,17 +223,37 @@ export default function App() {
     if (mode) setCameraMode(mode);
   }, []);
 
+  const handleActivatePower = useCallback(() => {
+    engineRef.current?.activateSpecialPower();
+  }, []);
+
+  const handleSelectMode = useCallback(
+    (nextMode: GameMode) => {
+      clearInputs();
+      setGameMode(nextMode);
+      setShowCompleteModal(false);
+      const targetLevel = nextMode === 'endless' ? ENDLESS_LEVEL_BASE : LEVELS[currentLevelIdx];
+      engineRef.current?.setMode(nextMode, targetLevel);
+      if (nextMode === 'endless') {
+        setShowLevelSelect(false);
+      }
+    },
+    [clearInputs, currentLevelIdx]
+  );
+
   const handleSelectLevel = useCallback(
     (level: LevelDefinition) => {
       const idx = LEVELS.findIndex((l) => l.id === level.id);
       if (idx === -1) return;
       clearInputs();
+      const targetMode = gameMode === 'endless' ? 'classic' : gameMode;
+      if (gameMode === 'endless') setGameMode('classic');
       setCurrentLevelIdx(idx);
       setShowLevelSelect(false);
       setShowCompleteModal(false);
-      engineRef.current?.loadLevel(level);
+      engineRef.current?.loadLevel(level, targetMode);
     },
-    [clearInputs]
+    [clearInputs, gameMode]
   );
 
   const handleNextLevel = useCallback(() => {
@@ -216,7 +267,6 @@ export default function App() {
     setSelectedSkinId(skin.id);
   }, []);
 
-  // Global keyboard & window focus listeners
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
@@ -225,6 +275,11 @@ export default function App() {
         if (!activeInputsRef.current.has(e.code)) {
           activeInputsRef.current.add(e.code);
           syncHoldingState();
+        }
+      } else if ((e.code === 'KeyE' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) {
+        if (!showLevelSelect && !showCompleteModal) {
+          e.preventDefault();
+          handleActivatePower();
         }
       } else if (e.code === 'KeyR' && !e.repeat) {
         if (!showLevelSelect) {
@@ -263,6 +318,7 @@ export default function App() {
     };
   }, [
     clearInputs,
+    handleActivatePower,
     handleRestart,
     handleToggleCamera,
     handleToggleMute,
@@ -271,9 +327,12 @@ export default function App() {
     syncHoldingState,
   ]);
 
-  // Pointer & Touch steering on the viewport
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (showLevelSelect || showCompleteModal) return;
+    if (e.pointerType === 'mouse' && e.button === 2) {
+      handleActivatePower();
+      return;
+    }
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     activeInputsRef.current.add(`ptr_${e.pointerId}`);
     syncHoldingState();
@@ -285,6 +344,12 @@ export default function App() {
       syncHoldingState();
     }
   };
+
+  const isPowerActive = hud.powerActiveRemaining > 0;
+  const isPowerReady = hud.powerCharge >= 100 && !isPowerActive;
+  const powerBarPct = isPowerActive
+    ? Math.min(100, (hud.powerActiveRemaining / Math.max(0.1, hud.powerDuration)) * 100)
+    : hud.powerCharge;
 
   return (
     <div
@@ -301,8 +366,10 @@ export default function App() {
       {/* Top HUD */}
       <TopHud
         level={currentLevel}
+        mode={gameMode}
         hud={hud}
         totalGold={totalGold}
+        endlessBest={endlessBest}
         muted={muted}
         cameraMode={cameraMode}
         onOpenLevels={() => {
@@ -314,22 +381,77 @@ export default function App() {
         onToggleCamera={handleToggleCamera}
       />
 
-      {/* Active Overdrive Indicator (only when inside a speed boost zone) */}
-      {hud.phase === 'playing' && hud.activeSpeedMultiplier > 1.05 && (
-        <div className="pointer-events-none fixed bottom-6 left-6 z-20 rounded-lg border border-cyan-400/40 bg-[#090f28]/85 px-3 py-1.5 text-xs font-semibold text-cyan-300 font-mono-num">
-          {hud.activeSpeedMultiplier.toFixed(2)}x Speed
+      {/* Bottom-Left Special Power Trigger & Charge Gauge */}
+      {!showLevelSelect && !showCompleteModal && (
+        <div
+          className="fixed bottom-5 left-5 z-20 flex flex-col gap-2"
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          {hud.phase === 'playing' && hud.activeSpeedMultiplier > 1.05 && (
+            <div className="pointer-events-none self-start rounded-lg border border-cyan-400/40 bg-[#090f28]/90 px-2.5 py-1 text-xs font-semibold text-cyan-300 font-mono-num">
+              {hud.activeSpeedMultiplier.toFixed(2)}x Speed
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={!isPowerReady || hud.phase !== 'playing'}
+            onClick={handleActivatePower}
+            title="Activate Special Power (E, Shift, or Right-Click)"
+            className={`flex items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-colors ${
+              isPowerActive
+                ? 'border-amber-400/70 bg-amber-950/70 text-amber-200'
+                : isPowerReady && hud.phase === 'playing'
+                  ? 'border-cyan-400 bg-[#0b1536]/95 text-white hover:bg-cyan-950/80'
+                  : 'border-white/15 bg-[#090f26]/88 text-slate-300'
+            }`}
+          >
+            <Zap
+              className={`h-4 w-4 shrink-0 ${
+                isPowerActive
+                  ? 'text-amber-300 fill-amber-300'
+                  : isPowerReady
+                    ? 'text-cyan-300 fill-cyan-300'
+                    : 'text-slate-500'
+              }`}
+            />
+            <div className="min-w-[116px]">
+              <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                <span>{selectedSkin.powerName}</span>
+                <span className="font-mono-num text-[11px] text-cyan-300">
+                  {isPowerActive
+                    ? `${hud.powerActiveRemaining.toFixed(1)}s`
+                    : isPowerReady
+                      ? 'E / Shift'
+                      : `${hud.powerCharge}%`}
+                </span>
+              </div>
+              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-75 ${
+                    isPowerActive ? 'bg-amber-400' : 'bg-cyan-400'
+                  }`}
+                  style={{ width: `${powerBarPct}%` }}
+                />
+              </div>
+            </div>
+          </button>
         </div>
       )}
 
-      {/* Ready-to-Launch Bottom Prompt (unobtrusive, leaves center 100% clear) */}
+      {/* Ready-to-Launch Bottom Prompt */}
       {hud.phase === 'ready' && !showLevelSelect && !showCompleteModal && (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-20 -translate-x-1/2 w-[92vw] max-w-lg text-center">
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-20 -translate-x-1/2 w-[92vw] max-w-lg text-center hidden sm:block">
           <div className="inline-flex flex-col items-center gap-1 rounded-xl border border-white/15 bg-[#090e24]/88 px-5 py-3">
             <div className="flex items-center gap-2 text-xs font-medium text-cyan-300">
               <span>
-                {hud.hasCheckpoint
-                  ? `Checkpoint ${hud.checkpointPercent}%`
-                  : `Course 0${currentLevel.number} · ${currentLevel.name}`}
+                {gameMode === 'endless'
+                  ? 'Endless Trench'
+                  : hud.hasCheckpoint
+                    ? `Checkpoint ${hud.checkpointPercent}%`
+                    : `Course 0${currentLevel.number} · ${currentLevel.name}`}
               </span>
               <span aria-hidden="true">·</span>
               <span className="font-mono-num text-slate-300">
@@ -337,21 +459,34 @@ export default function App() {
               </span>
             </div>
             <p className="text-xs sm:text-sm font-medium text-slate-100">
-              Hold <span className="text-cyan-300 font-semibold">Space</span>,{' '}
-              <span className="text-cyan-300 font-semibold">W / Up</span>, or{' '}
-              <span className="text-cyan-300 font-semibold">Click / Touch</span> to ascend · Release to dive
+              {gameMode === 'inverted' ? (
+                <>
+                  Gravity Flip: Hold to <span className="text-rose-300 font-semibold">dive</span> · Release to{' '}
+                  <span className="text-cyan-300 font-semibold">ascend</span>
+                </>
+              ) : (
+                <>
+                  Hold <span className="text-cyan-300 font-semibold">Space</span>,{' '}
+                  <span className="text-cyan-300 font-semibold">W / Up</span>, or{' '}
+                  <span className="text-cyan-300 font-semibold">Click</span> to ascend ·{' '}
+                  <span className="text-amber-300 font-semibold">E / Shift</span> for Power
+                </>
+              )}
             </p>
           </div>
         </div>
       )}
 
-      {/* Level Select & Skins Modal */}
+      {/* Hangar: Modes, Courses & Avatars Modal */}
       {showLevelSelect && (
         <LevelSelectModal
           currentLevelId={currentLevel.id}
+          currentMode={gameMode}
+          endlessBest={endlessBest}
           progressMap={progressMap}
           totalGold={totalGold}
           selectedSkinId={selectedSkinId}
+          onSelectMode={handleSelectMode}
           onSelectLevel={handleSelectLevel}
           onSelectSkin={handleSelectSkin}
           onClose={() => setShowLevelSelect(false)}
@@ -362,6 +497,7 @@ export default function App() {
       {showCompleteModal && (
         <LevelCompleteModal
           level={currentLevel}
+          mode={gameMode}
           hud={hud}
           totalGold={totalGold}
           hasNextLevel={currentLevelIdx < LEVELS.length - 1}
