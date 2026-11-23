@@ -1,0 +1,6 @@
+{
+  "name": "Cyber Trench: 3D Zigzag Wave Runner",
+  "description": "A 3D arcade rhythm-precision zigzag runner set inside a neon cyber-trench. Hold to ascend, release to dive, thread spinning saws and star mines, and race to the checkered finish portal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
