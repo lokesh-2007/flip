@@ -261,7 +261,7 @@ export function createPlayerCraft(skin: CraftSkin): PlayerCraftHandles {
   const coreMat = new THREE.MeshStandardMaterial({
     color: skin.coreColor,
     emissive: skin.coreColor,
-    emissiveIntensity: 2.0,
+    emissiveIntensity: 1.15,
     roughness: 0.15,
     metalness: 0.2,
   });
@@ -269,7 +269,7 @@ export function createPlayerCraft(skin: CraftSkin): PlayerCraftHandles {
   const rimMat = new THREE.MeshStandardMaterial({
     color: skin.trailColor,
     emissive: skin.trailColor,
-    emissiveIntensity: 1.4,
+    emissiveIntensity: 0.95,
     roughness: 0.25,
     metalness: 0.7,
   });

@@ -25,17 +25,17 @@ export function createTrenchGridTexture(
   ctx.fillRect(0, 0, size, size);
 
   // Subtle vertical neon edge glow bands along left/right edges
-  const edgeGradL = ctx.createLinearGradient(0, 0, size * 0.22, 0);
-  edgeGradL.addColorStop(0, `${accentCss}55`);
+  const edgeGradL = ctx.createLinearGradient(0, 0, size * 0.18, 0);
+  edgeGradL.addColorStop(0, `${accentCss}24`);
   edgeGradL.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = edgeGradL;
-  ctx.fillRect(0, 0, size * 0.22, size);
+  ctx.fillRect(0, 0, size * 0.18, size);
 
-  const edgeGradR = ctx.createLinearGradient(size, 0, size * 0.78, 0);
-  edgeGradR.addColorStop(0, `${hazardCss}55`);
+  const edgeGradR = ctx.createLinearGradient(size, 0, size * 0.82, 0);
+  edgeGradR.addColorStop(0, `${hazardCss}24`);
   edgeGradR.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = edgeGradR;
-  ctx.fillRect(size * 0.78, 0, size * 0.22, size);
+  ctx.fillRect(size * 0.82, 0, size * 0.18, size);
 
   // Multi-stop neon gradient for cross-lines
   const lineGrad = ctx.createLinearGradient(0, 0, size, size);
@@ -44,7 +44,7 @@ export function createTrenchGridTexture(
   lineGrad.addColorStop(1, hazardCss);
 
   // Fine sub-grid
-  ctx.strokeStyle = 'rgba(125, 211, 252, 0.14)';
+  ctx.strokeStyle = 'rgba(125, 211, 252, 0.12)';
   ctx.lineWidth = 1.5;
   const subStep = size / 8;
   for (let i = 0; i <= 8; i++) {
@@ -62,9 +62,9 @@ export function createTrenchGridTexture(
 
   // Primary neon gradient grid rails
   ctx.strokeStyle = lineGrad;
-  ctx.globalAlpha = 0.72;
-  ctx.lineWidth = 4;
-  ctx.strokeRect(2, 2, size - 4, size - 4);
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(1.5, 1.5, size - 3, size - 3);
 
   ctx.beginPath();
   ctx.moveTo(size / 2, 0);
@@ -74,9 +74,9 @@ export function createTrenchGridTexture(
   ctx.stroke();
 
   // Center lane forward chevron accents
-  ctx.globalAlpha = 0.45;
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 2.5;
+  ctx.globalAlpha = 0.28;
+  ctx.strokeStyle = accentCss;
+  ctx.lineWidth = 2;
   for (const cy of [size * 0.25, size * 0.75]) {
     ctx.beginPath();
     ctx.moveTo(size * 0.42, cy + 16);
@@ -85,17 +85,17 @@ export function createTrenchGridTexture(
     ctx.stroke();
   }
 
-  // Bloom-ready bright intersection nodes
-  ctx.globalAlpha = 0.95;
+  // Subtle intersection nodes
+  ctx.globalAlpha = 0.65;
   for (const x of [0, size / 2, size]) {
     for (const y of [0, size / 2, size]) {
-      const nodeGrad = ctx.createRadialGradient(x, y, 0, x, y, 10);
-      nodeGrad.addColorStop(0, '#ffffff');
-      nodeGrad.addColorStop(0.45, accentCss);
+      const nodeGrad = ctx.createRadialGradient(x, y, 0, x, y, 6);
+      nodeGrad.addColorStop(0, accentCss);
+      nodeGrad.addColorStop(0.5, `${accentCss}88`);
       nodeGrad.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = nodeGrad;
       ctx.beginPath();
-      ctx.arc(x, y, 10, 0, Math.PI * 2);
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
       ctx.fill();
     }
   }

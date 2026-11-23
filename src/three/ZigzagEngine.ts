@@ -286,9 +286,9 @@ export class ZigzagEngine {
 
       this.bloomPass = new UnrealBloomPass(
         new THREE.Vector2(width, height),
-        0.65, // strength
-        0.48, // radius
-        0.58  // threshold
+        0.26, // strength — subtle crisp neon halo without washing out the viewport
+        0.22, // radius
+        0.86  // threshold — only genuine neon highlights bloom
       );
       this.composer.addPass(this.bloomPass);
 
@@ -690,11 +690,11 @@ export class ZigzagEngine {
 
     this.floorMat = new THREE.MeshStandardMaterial({
       map: gridTex,
-      roughness: 0.32,
-      metalness: 0.65,
+      roughness: 0.42,
+      metalness: 0.55,
       emissive: theme.trenchGlowHex,
       emissiveMap: gridTex,
-      emissiveIntensity: 0.52,
+      emissiveIntensity: 0.28,
     });
     this.disposableMaterials.push(this.floorMat);
 
@@ -709,12 +709,12 @@ export class ZigzagEngine {
     this.levelGroup.add(this.ceilingMesh);
 
     // Glowing boundary prism rails along floor & ceiling
-    const railGeo = new THREE.BoxGeometry(0.24, 0.24, trackLen);
+    const railGeo = new THREE.BoxGeometry(0.18, 0.18, trackLen);
     this.railMat = new THREE.MeshStandardMaterial({
       color: theme.accentHex,
       emissive: theme.accentHex,
-      emissiveIntensity: 1.7,
-      roughness: 0.2,
+      emissiveIntensity: 0.85,
+      roughness: 0.25,
       metalness: 0.5,
     });
     this.disposableGeometries.push(railGeo);
@@ -722,7 +722,7 @@ export class ZigzagEngine {
 
     this.railMeshes = [];
     for (const x of [-4.25, 4.25]) {
-      for (const y of [TRACK_FLOOR_Y + 0.12, TRACK_CEILING_Y - 0.12]) {
+      for (const y of [TRACK_FLOOR_Y + 0.09, TRACK_CEILING_Y - 0.09]) {
         const rail = new THREE.Mesh(railGeo, this.railMat);
         rail.position.set(x, y, trackCenterZ);
         this.levelGroup.add(rail);
@@ -730,15 +730,15 @@ export class ZigzagEngine {
       }
     }
 
-    // Flowing Neon Gradient Energy Wall Ribbons along outer trench curbs
+    // Subtle Flowing Neon Gradient Energy Ribbons along outer trench curbs
     ribbonTex.repeat.set(trackLen / 24, 1);
-    const wallRibbonGeo = new THREE.PlaneGeometry(trackLen, 1.45);
+    const wallRibbonGeo = new THREE.PlaneGeometry(trackLen, 0.52);
     wallRibbonGeo.rotateY(Math.PI / 2);
     this.wallRibbonMat = new THREE.MeshBasicMaterial({
       map: ribbonTex,
       color: 0xffffff,
       transparent: true,
-      opacity: 0.72,
+      opacity: 0.26,
       side: THREE.DoubleSide,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -748,7 +748,7 @@ export class ZigzagEngine {
 
     this.wallRibbonMeshes = [];
     for (const x of [-4.32, 4.32]) {
-      for (const y of [TRACK_FLOOR_Y + 0.75, TRACK_CEILING_Y - 0.75]) {
+      for (const y of [TRACK_FLOOR_Y + 0.3, TRACK_CEILING_Y - 0.3]) {
         const wallRibbon = new THREE.Mesh(wallRibbonGeo, this.wallRibbonMat);
         wallRibbon.position.set(x, y, trackCenterZ);
         this.levelGroup.add(wallRibbon);
@@ -757,18 +757,18 @@ export class ZigzagEngine {
     }
 
     // Distant Neon Gradient Horizon Backdrop
-    const horizonGeo = new THREE.PlaneGeometry(110, 56);
+    const horizonGeo = new THREE.PlaneGeometry(96, 48);
     const horizonMat = new THREE.MeshBasicMaterial({
       map: horizonTex,
       transparent: true,
-      opacity: 0.68,
+      opacity: 0.26,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     this.disposableGeometries.push(horizonGeo);
     this.disposableMaterials.push(horizonMat);
     this.horizonMesh = new THREE.Mesh(horizonGeo, horizonMat);
-    this.horizonMesh.position.set(8, 6, 150);
+    this.horizonMesh.position.set(8, 6, 155);
     this.horizonMesh.rotation.y = -0.35;
     this.levelGroup.add(this.horizonMesh);
 
@@ -1053,40 +1053,40 @@ export class ZigzagEngine {
     if (this.floorMat) {
       this.floorMat.emissive.setHSL(
         gridHue,
-        0.92,
-        0.5 + this.smoothedIntensity * 0.14
+        0.88,
+        0.44 + this.smoothedIntensity * 0.08
       );
       this.floorMat.emissiveIntensity =
-        0.4 + this.smoothedIntensity * 0.7 + speedExcess * 0.5;
+        0.24 + this.smoothedIntensity * 0.24 + speedExcess * 0.16;
     }
 
     if (this.railMat) {
-      const l = 0.54 + this.smoothedIntensity * 0.16;
-      this.railMat.color.setHSL(prismHue, 0.96, l);
-      this.railMat.emissive.setHSL(prismHue, 0.96, l);
+      const l = 0.45 + this.smoothedIntensity * 0.08;
+      this.railMat.color.setHSL(prismHue, 0.92, l);
+      this.railMat.emissive.setHSL(prismHue, 0.92, l);
       this.railMat.emissiveIntensity =
-        1.45 + this.smoothedIntensity * 1.55 + speedExcess * 0.95;
+        0.74 + this.smoothedIntensity * 0.36 + speedExcess * 0.24;
     }
 
     if (this.wallRibbonTex && this.wallRibbonMat) {
       this.wallRibbonTex.offset.x = (this.wallRibbonTex.offset.x + dt * (0.12 + speedExcess * 0.25)) % 1;
-      this.wallRibbonMat.opacity = 0.55 + this.smoothedIntensity * 0.38;
+      this.wallRibbonMat.opacity = 0.2 + this.smoothedIntensity * 0.14;
     }
 
     if (this.towerMat) {
-      this.towerMat.emissive.setHSL(gridHue, 0.88, 0.48);
-      this.towerMat.emissiveIntensity = 0.18 + this.smoothedIntensity * 0.34;
+      this.towerMat.emissive.setHSL(gridHue, 0.8, 0.4);
+      this.towerMat.emissiveIntensity = 0.08 + this.smoothedIntensity * 0.12;
     }
 
     if (this.floatMat) {
-      this.floatMat.emissive.setHSL(towerHue, 0.92, 0.54);
+      this.floatMat.emissive.setHSL(towerHue, 0.88, 0.48);
       this.floatMat.emissiveIntensity =
-        0.55 + this.smoothedIntensity * 0.95 + (speedFactor > 1.2 ? 0.38 : 0);
+        0.3 + this.smoothedIntensity * 0.35 + (speedFactor > 1.2 ? 0.16 : 0);
     }
 
     if (this.bloomPass && this.bloomEnabled) {
-      const powerBoost = this.powerActiveRemaining > 0 ? 0.2 : 0;
-      const targetBloom = 0.58 + this.smoothedIntensity * 0.32 + speedExcess * 0.35 + powerBoost;
+      const powerBoost = this.powerActiveRemaining > 0 ? 0.08 : 0;
+      const targetBloom = 0.24 + this.smoothedIntensity * 0.12 + speedExcess * 0.14 + powerBoost;
       this.bloomPass.strength = THREE.MathUtils.damp(this.bloomPass.strength, targetBloom, 8, dt);
     }
 
@@ -1095,9 +1095,9 @@ export class ZigzagEngine {
       const targetHue =
         this.powerActiveRemaining > 0 && this.currentSkin.powerType === 'slowmo'
           ? 0.76
-          : (_hsl.h + reactiveHueShift * 0.18) % 1.0;
-      const targetLight = Math.min(0.14, _hsl.l + this.smoothedIntensity * 0.035);
-      _color.setHSL(targetHue, Math.min(0.85, _hsl.s + 0.1), targetLight);
+          : (_hsl.h + reactiveHueShift * 0.15) % 1.0;
+      const targetLight = Math.min(0.068, _hsl.l + this.smoothedIntensity * 0.014);
+      _color.setHSL(targetHue, Math.min(0.75, _hsl.s + 0.06), targetLight);
       this.scene.background.lerp(_color, Math.min(1, dt * 5));
       (this.scene.fog as THREE.FogExp2).color.copy(this.scene.background);
     }

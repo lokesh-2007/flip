@@ -126,7 +126,7 @@ export const TopHud: React.FC<TopHudProps> = ({
       </div>
 
       {/* Top-Center: Progress Bar or Infinity Mode Sector & Distance */}
-      <div className="pointer-events-auto flex flex-1 max-w-md flex-col items-center gap-1.5">
+      <div className="pointer-events-auto flex flex-1 max-w-md flex-col items-center gap-1.5 rounded-xl border border-white/15 bg-[#0a0f26]/88 px-4 py-2">
         {isInfinity ? (
           <>
             <div className="flex w-full items-center justify-between text-xs font-medium tracking-wide text-slate-300">
