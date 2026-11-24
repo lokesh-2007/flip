@@ -13,7 +13,13 @@ export type SpecialPowerType =
   | 'overdrive'
   | 'pulse'
   | 'warp'
-  | 'vortex';
+  | 'vortex'
+  | 'barrage'
+  | 'smash'
+  | 'aegis'
+  | 'stasis'
+  | 'deflect'
+  | 'revive';
 
 export type AvatarShape =
   | 'gyro'
@@ -25,7 +31,19 @@ export type AvatarShape =
   | 'shuriken'
   | 'viper'
   | 'lotus'
-  | 'titan';
+  | 'titan'
+  | 'reaper'
+  | 'annihilator'
+  | 'aegis'
+  | 'bastion'
+  | 'sentinel'
+  | 'phoenix';
+
+export type AvatarRole = 'defense' | 'offense' | 'utility';
+
+export type EnvEventType = 'glitchStorm' | 'gravityShift' | 'solarFlare' | 'magTurbulence';
+
+export type EnvEventPhase = 'idle' | 'warning' | 'active';
 
 export interface SawObstacle {
   id: string;
@@ -71,12 +89,68 @@ export interface SpeedGateObstacle {
   multiplier: number;
 }
 
+export interface LaserBarObstacle {
+  id: string;
+  type: 'laserBar';
+  z1: number;
+  y1: number;
+  z2: number;
+  y2: number;
+  thickness?: number;
+}
+
+export interface PatrolDroneObstacle {
+  id: string;
+  type: 'patrolDrone';
+  z: number;
+  baseY: number;
+  ampY: number;
+  speed: number;
+  phase?: number;
+  radius: number;
+}
+
+export interface RotaryGateObstacle {
+  id: string;
+  type: 'rotaryGate';
+  z: number;
+  y: number;
+  armLength: number;
+  blades?: 2 | 3 | 4;
+  spinSpeed: number;
+}
+
+export interface OrbitMineObstacle {
+  id: string;
+  type: 'orbitMine';
+  z: number;
+  y: number;
+  orbitRadius: number;
+  mineRadius: number;
+  spinSpeed: number;
+}
+
+export type WarpEffectType = 'shiftLeft' | 'shiftRight' | 'invertCam' | 'mirrorCam';
+
+export interface WarpGateObstacle {
+  id: string;
+  type: 'warpGate';
+  z: number;
+  warpEffect: WarpEffectType;
+  duration?: number;
+}
+
 export type LevelObstacle =
   | SawObstacle
   | StarMineObstacle
   | SpikeClusterObstacle
   | BlockObstacle
-  | SpeedGateObstacle;
+  | SpeedGateObstacle
+  | LaserBarObstacle
+  | PatrolDroneObstacle
+  | RotaryGateObstacle
+  | OrbitMineObstacle
+  | WarpGateObstacle;
 
 export interface CollectibleItem {
   id: string;
@@ -119,6 +193,7 @@ export interface CraftSkin {
   id: string;
   name: string;
   shape: AvatarShape;
+  role: AvatarRole;
   coreColor: number;
   trailColor: number;
   cssSwatch: string;
@@ -155,5 +230,96 @@ export interface HudSnapshot {
   powerActiveRemaining: number;
   powerDuration: number;
   shieldActive: boolean;
+  shieldCharges: number;
   musicIntensity: number;
+  activeWarpEffect: WarpEffectType | null;
+  activeWarpRemaining: number;
+  envEventType: EnvEventType | null;
+  envEventPhase: EnvEventPhase;
+  envEventRemaining: number;
+}
+
+export type DailyChallengeType =
+  | 'collect_gold'
+  | 'infinity_sectors'
+  | 'infinity_distance'
+  | 'near_misses'
+  | 'activate_powers'
+  | 'complete_course'
+  | 'collect_stars'
+  | 'special_mode_clear';
+
+export interface DailyChallengeTask {
+  id: string;
+  type: DailyChallengeType;
+  title: string;
+  description: string;
+  target: number;
+  rewardGold: number;
+  unitLabel?: string;
+}
+
+export interface DailyChallengeState {
+  dateKey: string;
+  tasks: DailyChallengeTask[];
+  progress: Record<string, number>;
+  claimedIds: string[];
+}
+
+export interface ChallengeEvent {
+  goldEarned?: number;
+  nearMisses?: number;
+  powersActivated?: number;
+  starsCollected?: number;
+  sectorsClearedInRun?: number;
+  infinityDistanceInRun?: number;
+  courseCompletedMode?: GameMode;
+  eventsSurvived?: number;
+  warpGatesCleared?: number;
+  shieldsAbsorbed?: number;
+  hazardsShattered?: number;
+}
+
+export type UpgradeId = 'capacitor' | 'plating' | 'collector' | 'stabilizer';
+
+export type UpgradeLevels = Record<UpgradeId, number>;
+
+export interface UpgradeDefinition {
+  id: UpgradeId;
+  name: string;
+  description: string;
+  effectPerLevel: string;
+  maxLevel: number;
+  baseCost: number;
+  costMultiplier: number;
+}
+
+export type AdvancementCategory = 'flight' | 'defense' | 'mastery' | 'tech';
+
+export interface AdvancementDefinition {
+  id: string;
+  title: string;
+  description: string;
+  category: AdvancementCategory;
+  target: number;
+  rewardGold: number;
+  unitLabel?: string;
+}
+
+export interface CareerStats {
+  coursesCompleted: number;
+  specialModeClears: number;
+  starsCollected: number;
+  nearMisses: number;
+  eventsSurvived: number;
+  warpGatesCleared: number;
+  shieldsAbsorbed: number;
+  hazardsShattered: number;
+  bestEndlessSector: number;
+  maxUpgradeLevel: number;
+}
+
+export interface AdvancementsState {
+  stats: CareerStats;
+  claimedIds: string[];
 }

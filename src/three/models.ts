@@ -2,9 +2,14 @@ import * as THREE from 'three';
 import {
   BlockObstacle,
   CraftSkin,
+  LaserBarObstacle,
+  OrbitMineObstacle,
+  PatrolDroneObstacle,
+  RotaryGateObstacle,
   SawObstacle,
   SpikeClusterObstacle,
   StarMineObstacle,
+  WarpGateObstacle,
 } from '../types/game';
 
 export interface PlayerCraftHandles {
@@ -347,6 +352,255 @@ function buildAvatarBody(
 
     innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.032, 8, 24), coreMat);
     innerRing.rotation.x = Math.PI / 2;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'reaper') {
+    // Inferno Reaper: Aggressive twin-scythe war-frame + plasma furnace + dorsal fins
+    coreMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), coreMat);
+    bodyGroup.add(coreMesh);
+
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.68), metalMat);
+    chassis.position.z = -0.04;
+    bodyGroup.add(chassis);
+
+    const fangShape = new THREE.Shape();
+    fangShape.moveTo(0, -0.25);
+    fangShape.lineTo(0.22, 0.08);
+    fangShape.lineTo(0.14, 0.78);
+    fangShape.lineTo(-0.04, 0.42);
+    fangShape.closePath();
+
+    const fangGeo = new THREE.ExtrudeGeometry(fangShape, {
+      depth: 0.06,
+      bevelEnabled: true,
+      bevelThickness: 0.02,
+      bevelSize: 0.015,
+      bevelSegments: 2,
+    });
+    fangGeo.center();
+    fangGeo.rotateX(Math.PI / 2);
+
+    const leftFang = new THREE.Mesh(fangGeo, rimMat);
+    leftFang.position.set(-0.36, 0, 0.14);
+    leftFang.rotation.y = -0.18;
+    bodyGroup.add(leftFang);
+
+    const rightFang = new THREE.Mesh(fangGeo, rimMat);
+    rightFang.position.set(0.36, 0, 0.14);
+    rightFang.rotation.z = Math.PI;
+    rightFang.rotation.y = 0.18;
+    bodyGroup.add(rightFang);
+
+    const dorsalFin = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.36, 0.45), rimMat);
+    dorsalFin.position.set(0, 0.24, -0.14);
+    dorsalFin.rotation.x = -0.35;
+    bodyGroup.add(dorsalFin);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.04, 8, 24), metalMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.028, 8, 20), coreMat);
+    innerRing.rotation.x = Math.PI / 3;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'annihilator') {
+    // Void Annihilator: Triaxial void dreadnought + singularity core + 3 monolith blades
+    coreMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.28, 0), coreMat);
+    bodyGroup.add(coreMesh);
+
+    const shellMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.38, 0), shellMat);
+    bodyGroup.add(shellMesh);
+
+    const monolithGeo = new THREE.BoxGeometry(0.14, 0.42, 0.62);
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      const pylon = new THREE.Mesh(monolithGeo, i === 0 ? rimMat : metalMat);
+      pylon.position.set(Math.cos(a) * 0.46, Math.sin(a) * 0.46, 0.04);
+      pylon.rotation.z = a;
+      bodyGroup.add(pylon);
+    }
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.045, 8, 6), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.032, 8, 28), coreMat);
+    innerRing.rotation.x = Math.PI / 3;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'aegis') {
+    // Aegis Bulwark: Heavy hexagonal bastion core + twin beveled deflector shields + dual shield halos
+    coreMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.36, 0.52, 6), metalMat);
+    coreMesh.rotation.x = Math.PI / 2;
+    bodyGroup.add(coreMesh);
+
+    const reactorOrb = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 16), coreMat);
+    reactorOrb.position.z = 0.22;
+    bodyGroup.add(reactorOrb);
+
+    const shieldShape = new THREE.Shape();
+    shieldShape.moveTo(0, -0.38);
+    shieldShape.lineTo(0.24, -0.18);
+    shieldShape.lineTo(0.28, 0.26);
+    shieldShape.lineTo(0, 0.42);
+    shieldShape.lineTo(-0.16, 0.16);
+    shieldShape.closePath();
+
+    const shieldGeo = new THREE.ExtrudeGeometry(shieldShape, {
+      depth: 0.07,
+      bevelEnabled: true,
+      bevelThickness: 0.025,
+      bevelSize: 0.02,
+      bevelSegments: 2,
+    });
+    shieldGeo.center();
+
+    const leftShield = new THREE.Mesh(shieldGeo, metalMat);
+    leftShield.position.set(-0.44, 0, 0.12);
+    leftShield.rotation.y = 0.45;
+    bodyGroup.add(leftShield);
+
+    const rightShield = new THREE.Mesh(shieldGeo, metalMat);
+    rightShield.position.set(0.44, 0, 0.12);
+    rightShield.rotation.y = -0.45;
+    rightShield.rotation.z = Math.PI;
+    bodyGroup.add(rightShield);
+
+    const visorBar = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.12, 0.18), rimMat);
+    visorBar.position.set(0, 0.06, 0.3);
+    bodyGroup.add(visorBar);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.05, 8, 6), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.032, 8, 24), coreMat);
+    innerRing.rotation.x = Math.PI / 2;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'bastion') {
+    // Chrono Bastion: Faceted diamond cryo-hull + twin vertical stabilizer fins + cryo glass canopy
+    const hullGeo = new THREE.OctahedronGeometry(0.38, 0);
+    hullGeo.scale(0.95, 0.72, 1.45);
+    coreMesh = new THREE.Mesh(hullGeo, metalMat);
+    bodyGroup.add(coreMesh);
+
+    const glassDome = new THREE.Mesh(new THREE.SphereGeometry(0.28, 16, 16), shellMat);
+    glassDome.position.set(0, 0.08, 0.06);
+    bodyGroup.add(glassDome);
+
+    const cryoCore = new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 0), coreMat);
+    cryoCore.position.set(0, 0.04, 0.14);
+    bodyGroup.add(cryoCore);
+
+    const arcGeo = new THREE.TorusGeometry(0.46, 0.038, 8, 18, Math.PI * 1.15);
+    const topArc = new THREE.Mesh(arcGeo, rimMat);
+    topArc.rotation.z = -Math.PI * 0.075;
+    topArc.position.z = -0.06;
+    bodyGroup.add(topArc);
+
+    const finGeo = new THREE.BoxGeometry(0.06, 0.44, 0.48);
+    const topFin = new THREE.Mesh(finGeo, metalMat);
+    topFin.position.set(0, 0.34, -0.14);
+    bodyGroup.add(topFin);
+
+    const botFin = new THREE.Mesh(finGeo, metalMat);
+    botFin.position.set(0, -0.34, -0.14);
+    bodyGroup.add(botFin);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.52, 0.038, 8, 28), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.028, 8, 24), coreMat);
+    innerRing.rotation.x = Math.PI / 4;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'sentinel') {
+    // Sentinel Ward: Sapphire icosahedron core + 3 beveled prism ward plates + twin interceptor rings
+    coreMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.27, 0), coreMat);
+    bodyGroup.add(coreMesh);
+
+    const wardShell = new THREE.Mesh(new THREE.OctahedronGeometry(0.36, 1), shellMat);
+    bodyGroup.add(wardShell);
+
+    const plateShape = new THREE.Shape();
+    plateShape.moveTo(0, 0.24);
+    plateShape.lineTo(0.22, -0.14);
+    plateShape.lineTo(-0.22, -0.14);
+    plateShape.closePath();
+
+    const plateGeo = new THREE.ExtrudeGeometry(plateShape, {
+      depth: 0.05,
+      bevelEnabled: true,
+      bevelThickness: 0.018,
+      bevelSize: 0.015,
+      bevelSegments: 2,
+    });
+    plateGeo.center();
+
+    for (let i = 0; i < 3; i++) {
+      const angle = (i / 3) * Math.PI * 2 + Math.PI / 6;
+      const plate = new THREE.Mesh(plateGeo, i === 0 ? rimMat : metalMat);
+      plate.position.set(Math.cos(angle) * 0.46, Math.sin(angle) * 0.46, 0.05);
+      plate.rotation.z = angle - Math.PI / 2;
+      plate.rotation.x = 0.28;
+      bodyGroup.add(plate);
+    }
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.04, 8, 28), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.03, 8, 24), coreMat);
+    innerRing.rotation.x = Math.PI / 3;
+    bodyGroup.add(innerRing);
+  } else if (skin.shape === 'phoenix') {
+    // Phoenix Core: Sculpted swept solar wings + glowing furnace orb + twin dorsal plumes
+    coreMesh = new THREE.Mesh(new THREE.SphereGeometry(0.26, 16, 16), coreMat);
+    bodyGroup.add(coreMesh);
+
+    const cage = new THREE.Mesh(new THREE.OctahedronGeometry(0.36, 0), shellMat);
+    bodyGroup.add(cage);
+
+    const wingShape = new THREE.Shape();
+    wingShape.moveTo(0, 0.2);
+    wingShape.lineTo(0.26, 0.34);
+    wingShape.lineTo(0.68, -0.1);
+    wingShape.lineTo(0.44, -0.22);
+    wingShape.lineTo(0.56, -0.44);
+    wingShape.lineTo(0.14, -0.26);
+    wingShape.closePath();
+
+    const wingGeo = new THREE.ExtrudeGeometry(wingShape, {
+      depth: 0.05,
+      bevelEnabled: true,
+      bevelThickness: 0.02,
+      bevelSize: 0.015,
+      bevelSegments: 2,
+    });
+    wingGeo.center();
+    wingGeo.rotateX(Math.PI / 2);
+
+    const leftWing = new THREE.Mesh(wingGeo, rimMat);
+    leftWing.position.set(-0.38, 0.02, -0.02);
+    leftWing.rotation.z = 0.18;
+    bodyGroup.add(leftWing);
+
+    const rightWing = new THREE.Mesh(wingGeo, rimMat);
+    rightWing.position.set(0.38, 0.02, -0.02);
+    rightWing.scale.x = -1;
+    rightWing.rotation.z = -0.18;
+    bodyGroup.add(rightWing);
+
+    const crestGeo = new THREE.ConeGeometry(0.08, 0.42, 4);
+    crestGeo.rotateX(-Math.PI * 0.42);
+    const crest = new THREE.Mesh(crestGeo, metalMat);
+    crest.position.set(0, 0.24, -0.18);
+    bodyGroup.add(crest);
+
+    outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.52, 0.042, 8, 30), rimMat);
+    outerRing.rotation.y = Math.PI / 2;
+    bodyGroup.add(outerRing);
+
+    innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.03, 8, 24), coreMat);
+    innerRing.rotation.x = -Math.PI / 3;
     bodyGroup.add(innerRing);
   } else {
     // Gyro Orb (default): Core + shell + titanium outer ring + glowing gimbal + beveled winglets
@@ -857,42 +1111,51 @@ export function createBlockObstacle(obs: BlockObstacle, accentHex: number, hazar
   return group;
 }
 
-export function createGoldCube(): THREE.Group {
-  const group = new THREE.Group();
-
-  const outerGeo = new THREE.BoxGeometry(0.56, 0.56, 0.56);
-  const outerMat = new THREE.MeshStandardMaterial({
-    color: 0xfacc15,
-    emissive: 0xd97706,
-    emissiveIntensity: 0.85,
-    metalness: 0.9,
-    roughness: 0.18,
-  });
-  const outerMesh = new THREE.Mesh(outerGeo, outerMat);
-  group.add(outerMesh);
-
-  const edges = new THREE.EdgesGeometry(outerGeo);
-  const edgeLine = new THREE.LineSegments(
-    edges,
-    new THREE.LineBasicMaterial({ color: 0xfef08a })
-  );
-  group.add(edgeLine);
-
-  const innerGeo = new THREE.OctahedronGeometry(0.24, 0);
-  const innerMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    emissive: 0xfef08a,
-    emissiveIntensity: 1.6,
-    roughness: 0.1,
-    metalness: 0.2,
-  });
-  group.add(new THREE.Mesh(innerGeo, innerMat));
-
-  return group;
+interface SharedCollectibleCache {
+  goldOuterGeo: THREE.BoxGeometry;
+  goldOuterMat: THREE.MeshStandardMaterial;
+  goldEdgeGeo: THREE.EdgesGeometry;
+  goldEdgeMat: THREE.LineBasicMaterial;
+  goldInnerGeo: THREE.OctahedronGeometry;
+  goldInnerMat: THREE.MeshStandardMaterial;
+  starGeo: THREE.ExtrudeGeometry;
+  starMat: THREE.MeshStandardMaterial;
+  starRingGeo: THREE.TorusGeometry;
+  starRingMat: THREE.MeshStandardMaterial;
 }
 
-export function createStarCollectible(): THREE.Group {
-  const group = new THREE.Group();
+let sharedCache: SharedCollectibleCache | null = null;
+
+function markShared<T extends THREE.BufferGeometry | THREE.Material>(res: T): T {
+  res.userData.sharedResource = true;
+  return res;
+}
+
+function getSharedCollectibleCache(): SharedCollectibleCache {
+  if (sharedCache) return sharedCache;
+
+  const goldOuterGeo = markShared(new THREE.BoxGeometry(0.56, 0.56, 0.56));
+  const goldOuterMat = markShared(
+    new THREE.MeshStandardMaterial({
+      color: 0xfacc15,
+      emissive: 0xd97706,
+      emissiveIntensity: 0.85,
+      metalness: 0.9,
+      roughness: 0.18,
+    })
+  );
+  const goldEdgeGeo = markShared(new THREE.EdgesGeometry(goldOuterGeo));
+  const goldEdgeMat = markShared(new THREE.LineBasicMaterial({ color: 0xfef08a }));
+  const goldInnerGeo = markShared(new THREE.OctahedronGeometry(0.24, 0));
+  const goldInnerMat = markShared(
+    new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: 0xfef08a,
+      emissiveIntensity: 1.6,
+      roughness: 0.1,
+      metalness: 0.2,
+    })
+  );
 
   const shape = new THREE.Shape();
   const points = 5;
@@ -908,38 +1171,83 @@ export function createStarCollectible(): THREE.Group {
   }
   shape.closePath();
 
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: 0.2,
-    bevelEnabled: true,
-    bevelThickness: 0.05,
-    bevelSize: 0.04,
-    bevelSegments: 2,
-  });
-  geo.center();
+  const starGeo = markShared(
+    new THREE.ExtrudeGeometry(shape, {
+      depth: 0.2,
+      bevelEnabled: true,
+      bevelThickness: 0.05,
+      bevelSize: 0.04,
+      bevelSegments: 2,
+    })
+  );
+  starGeo.center();
 
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0xfde047,
-    emissive: 0xf59e0b,
-    emissiveIntensity: 1.4,
-    metalness: 0.88,
-    roughness: 0.15,
-  });
-  const starMesh = new THREE.Mesh(geo, mat);
-  group.add(starMesh);
+  const starMat = markShared(
+    new THREE.MeshStandardMaterial({
+      color: 0xfde047,
+      emissive: 0xf59e0b,
+      emissiveIntensity: 1.4,
+      metalness: 0.88,
+      roughness: 0.15,
+    })
+  );
+  const starRingGeo = markShared(new THREE.TorusGeometry(0.84, 0.04, 8, 28));
+  const starRingMat = markShared(
+    new THREE.MeshStandardMaterial({
+      color: 0xfef08a,
+      emissive: 0xfacc15,
+      emissiveIntensity: 1.6,
+      roughness: 0.2,
+      metalness: 0.5,
+    })
+  );
 
-  // Orbiting halo ring
-  const ringGeo = new THREE.TorusGeometry(0.84, 0.04, 8, 28);
-  const ringMat = new THREE.MeshStandardMaterial({
-    color: 0xfef08a,
-    emissive: 0xfacc15,
-    emissiveIntensity: 1.6,
-    roughness: 0.2,
-    metalness: 0.5,
-  });
-  const ring = new THREE.Mesh(ringGeo, ringMat);
+  sharedCache = {
+    goldOuterGeo,
+    goldOuterMat,
+    goldEdgeGeo,
+    goldEdgeMat,
+    goldInnerGeo,
+    goldInnerMat,
+    starGeo,
+    starMat,
+    starRingGeo,
+    starRingMat,
+  };
+  return sharedCache;
+}
+
+export function disposeSharedModelCache(): void {
+  if (!sharedCache) return;
+  sharedCache.goldOuterGeo.dispose();
+  sharedCache.goldOuterMat.dispose();
+  sharedCache.goldEdgeGeo.dispose();
+  sharedCache.goldEdgeMat.dispose();
+  sharedCache.goldInnerGeo.dispose();
+  sharedCache.goldInnerMat.dispose();
+  sharedCache.starGeo.dispose();
+  sharedCache.starMat.dispose();
+  sharedCache.starRingGeo.dispose();
+  sharedCache.starRingMat.dispose();
+  sharedCache = null;
+}
+
+export function createGoldCube(): THREE.Group {
+  const c = getSharedCollectibleCache();
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(c.goldOuterGeo, c.goldOuterMat));
+  group.add(new THREE.LineSegments(c.goldEdgeGeo, c.goldEdgeMat));
+  group.add(new THREE.Mesh(c.goldInnerGeo, c.goldInnerMat));
+  return group;
+}
+
+export function createStarCollectible(): THREE.Group {
+  const c = getSharedCollectibleCache();
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(c.starGeo, c.starMat));
+  const ring = new THREE.Mesh(c.starRingGeo, c.starRingMat);
   ring.rotation.x = Math.PI / 3;
   group.add(ring);
-
   return group;
 }
 
@@ -1159,3 +1467,404 @@ export function createFinishPortal(
 
   return { group, ring };
 }
+
+export function createLaserBar(obs: LaserBarObstacle, hazardHex: number): THREE.Group {
+  const group = new THREE.Group();
+  const dz = obs.z2 - obs.z1;
+  const dy = obs.y2 - obs.y1;
+  const length = Math.hypot(dz, dy);
+  const midZ = (obs.z1 + obs.z2) * 0.5;
+  const midY = (obs.y1 + obs.y2) * 0.5;
+  const thickness = obs.thickness ?? 0.24;
+
+  // Metallic emitter pylons at both ends
+  const capGeo = new THREE.CylinderGeometry(0.3, 0.36, 0.55, 8);
+  capGeo.rotateZ(Math.PI / 2);
+  const capMat = new THREE.MeshStandardMaterial({
+    color: 0x161c36,
+    metalness: 0.9,
+    roughness: 0.25,
+  });
+  const emitterRingMat = new THREE.MeshStandardMaterial({
+    color: hazardHex,
+    emissive: hazardHex,
+    emissiveIntensity: 1.4,
+    roughness: 0.2,
+  });
+
+  for (const [z, y] of [
+    [obs.z1, obs.y1],
+    [obs.z2, obs.y2],
+  ]) {
+    const cap = new THREE.Mesh(capGeo, capMat);
+    cap.position.set(0, y, z);
+    group.add(cap);
+
+    const node = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12), emitterRingMat);
+    node.position.set(0, y, z);
+    group.add(node);
+  }
+
+  // Plasma beam core & outer sheath oriented between (0, y1, z1) and (0, y2, z2)
+  const beamGroup = new THREE.Group();
+  beamGroup.position.set(0, midY, midZ);
+  // Default cylinder points along +Y; rotate around X to align in Z-Y plane
+  const angle = Math.atan2(dz, dy);
+  beamGroup.rotation.x = angle;
+
+  const coreGeo = new THREE.CylinderGeometry(thickness * 0.45, thickness * 0.45, length, 10);
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: hazardHex,
+    emissiveIntensity: 1.65,
+    roughness: 0.15,
+  });
+  beamGroup.add(new THREE.Mesh(coreGeo, coreMat));
+
+  const sheathGeo = new THREE.CylinderGeometry(thickness * 0.85, thickness * 0.85, length, 10);
+  const sheathMat = new THREE.MeshBasicMaterial({
+    color: hazardHex,
+    transparent: true,
+    opacity: 0.32,
+    depthWrite: false,
+  });
+  beamGroup.add(new THREE.Mesh(sheathGeo, sheathMat));
+
+  group.add(beamGroup);
+  return group;
+}
+
+export function createPatrolDrone(
+  obs: PatrolDroneObstacle,
+  accentHex: number,
+  hazardHex: number
+): { group: THREE.Group; droneBody: THREE.Group } {
+  const group = new THREE.Group();
+  group.position.set(0, 0, obs.z);
+
+  // Faint vertical patrol rail spanning travel range
+  const railH = Math.max(0.5, obs.ampY * 2);
+  const railGeo = new THREE.CylinderGeometry(0.05, 0.05, railH, 8);
+  const railMat = new THREE.MeshBasicMaterial({
+    color: accentHex,
+    transparent: true,
+    opacity: 0.35,
+  });
+  const rail = new THREE.Mesh(railGeo, railMat);
+  rail.position.set(0, obs.baseY, 0);
+  group.add(rail);
+
+  const endCapGeo = new THREE.BoxGeometry(0.45, 0.12, 0.45);
+  const endCapMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    metalness: 0.85,
+    roughness: 0.25,
+  });
+  for (const dir of [-1, 1]) {
+    const cap = new THREE.Mesh(endCapGeo, endCapMat);
+    cap.position.set(0, obs.baseY + dir * obs.ampY, 0);
+    group.add(cap);
+  }
+
+  // Animated drone body subgroup
+  const droneBody = new THREE.Group();
+  droneBody.position.set(0, obs.baseY, 0);
+
+  const hullGeo = new THREE.OctahedronGeometry(obs.radius * 0.82, 0);
+  const hullMat = new THREE.MeshStandardMaterial({
+    color: 0x1e1336,
+    emissive: hazardHex,
+    emissiveIntensity: 0.65,
+    metalness: 0.85,
+    roughness: 0.22,
+  });
+  droneBody.add(new THREE.Mesh(hullGeo, hullMat));
+
+  const ringGeo = new THREE.TorusGeometry(obs.radius * 0.96, 0.075, 8, 24);
+  ringGeo.rotateY(Math.PI / 2);
+  const ringMat = new THREE.MeshStandardMaterial({
+    color: hazardHex,
+    emissive: hazardHex,
+    emissiveIntensity: 1.45,
+    roughness: 0.2,
+  });
+  droneBody.add(new THREE.Mesh(ringGeo, ringMat));
+
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0xfbbf24,
+    emissive: 0xf97316,
+    emissiveIntensity: 1.5,
+  });
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(obs.radius * 0.34, 12, 12), coreMat);
+  droneBody.add(eye);
+
+  group.add(droneBody);
+  return { group, droneBody };
+}
+
+export function createRotaryGate(
+  obs: RotaryGateObstacle,
+  accentHex: number,
+  hazardHex: number
+): { group: THREE.Group; rotor: THREE.Group } {
+  const group = new THREE.Group();
+  group.position.set(0, obs.y, obs.z);
+
+  const blades = obs.blades ?? 2;
+
+  // Armored center hub
+  const hubGeo = new THREE.CylinderGeometry(0.46, 0.46, 1.1, 12);
+  hubGeo.rotateZ(Math.PI / 2);
+  const hubMat = new THREE.MeshStandardMaterial({
+    color: 0x161d36,
+    metalness: 0.9,
+    roughness: 0.25,
+  });
+  group.add(new THREE.Mesh(hubGeo, hubMat));
+
+  const hubGlow = new THREE.Mesh(
+    new THREE.TorusGeometry(0.5, 0.07, 8, 24).rotateY(Math.PI / 2),
+    new THREE.MeshStandardMaterial({
+      color: accentHex,
+      emissive: accentHex,
+      emissiveIntensity: 1.3,
+    })
+  );
+  group.add(hubGlow);
+
+  // Rotating blades subgroup
+  const rotor = new THREE.Group();
+  const bladeMat = new THREE.MeshStandardMaterial({
+    color: 0x28103c,
+    emissive: hazardHex,
+    emissiveIntensity: 0.85,
+    metalness: 0.78,
+    roughness: 0.25,
+  });
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0xf472b6 });
+
+  const bladeGeo = new THREE.BoxGeometry(0.56, obs.armLength, 0.28);
+  const bladeEdges = new THREE.EdgesGeometry(bladeGeo);
+
+  for (let i = 0; i < blades; i++) {
+    const angle = (i / blades) * Math.PI * 2;
+    const armGroup = new THREE.Group();
+    armGroup.rotation.x = angle;
+
+    const mesh = new THREE.Mesh(bladeGeo, bladeMat);
+    mesh.position.y = obs.armLength * 0.5;
+    armGroup.add(mesh);
+
+    const wire = new THREE.LineSegments(bladeEdges, edgeMat);
+    wire.position.y = obs.armLength * 0.5;
+    armGroup.add(wire);
+
+    rotor.add(armGroup);
+  }
+
+  group.add(rotor);
+  return { group, rotor };
+}
+
+export function createOrbitMine(
+  obs: OrbitMineObstacle,
+  accentHex: number,
+  hazardHex: number
+): { group: THREE.Group; rotor: THREE.Group } {
+  const group = new THREE.Group();
+  group.position.set(0, obs.y, obs.z);
+
+  // Central beacon node
+  const beaconMat = new THREE.MeshStandardMaterial({
+    color: accentHex,
+    emissive: accentHex,
+    emissiveIntensity: 1.1,
+    roughness: 0.25,
+  });
+  group.add(new THREE.Mesh(new THREE.OctahedronGeometry(0.32, 0), beaconMat));
+
+  // Orbit path indicator ring
+  const trackGeo = new THREE.TorusGeometry(obs.orbitRadius, 0.035, 6, 36);
+  trackGeo.rotateY(Math.PI / 2);
+  const trackMat = new THREE.MeshBasicMaterial({
+    color: hazardHex,
+    transparent: true,
+    opacity: 0.28,
+  });
+  group.add(new THREE.Mesh(trackGeo, trackMat));
+
+  // Rotor holding twin opposite mines + laser tether
+  const rotor = new THREE.Group();
+
+  const tetherGeo = new THREE.CylinderGeometry(0.06, 0.06, obs.orbitRadius * 2, 8);
+  const tetherMat = new THREE.MeshBasicMaterial({
+    color: hazardHex,
+    transparent: true,
+    opacity: 0.45,
+  });
+  rotor.add(new THREE.Mesh(tetherGeo, tetherMat));
+
+  const mineGeo = new THREE.IcosahedronGeometry(obs.mineRadius, 0);
+  const mineMat = new THREE.MeshStandardMaterial({
+    color: 0x2b0d3e,
+    emissive: hazardHex,
+    emissiveIntensity: 1.05,
+    metalness: 0.72,
+    roughness: 0.22,
+  });
+  const mineEdgeMat = new THREE.LineBasicMaterial({ color: 0xfda4af });
+  const mineEdges = new THREE.EdgesGeometry(mineGeo);
+
+  for (const dir of [-1, 1]) {
+    const mine = new THREE.Mesh(mineGeo, mineMat);
+    mine.position.set(0, dir * obs.orbitRadius, 0);
+    rotor.add(mine);
+
+    const wire = new THREE.LineSegments(mineEdges, mineEdgeMat);
+    wire.position.set(0, dir * obs.orbitRadius, 0);
+    rotor.add(wire);
+  }
+
+  group.add(rotor);
+  return { group, rotor };
+}
+
+export function createWarpGate(obs: WarpGateObstacle): {
+  group: THREE.Group;
+  rotor: THREE.Group;
+  membraneMat: THREE.MeshBasicMaterial;
+} {
+  const group = new THREE.Group();
+  group.position.set(0, 6.0, obs.z);
+
+  const isShift = obs.warpEffect === 'shiftLeft' || obs.warpEffect === 'shiftRight';
+  const isInvert = obs.warpEffect === 'invertCam';
+
+  const primaryHex = isShift ? 0xa855f7 : isInvert ? 0xf43f5e : 0x6366f1;
+  const secondaryHex = isShift ? 0x22d3ee : isInvert ? 0xfbbf24 : 0xf472b6;
+
+  // 1. Primary silhouette: twin brushed-metallic portal pylons at trench flanks
+  const pylonMat = new THREE.MeshStandardMaterial({
+    color: 0x111833,
+    metalness: 0.9,
+    roughness: 0.24,
+  });
+  const pylonGeo = new THREE.BoxGeometry(0.55, 11.8, 0.72);
+  for (const xPos of [-2.95, 2.95]) {
+    const pylon = new THREE.Mesh(pylonGeo, pylonMat);
+    pylon.position.set(xPos, 0, 0);
+    group.add(pylon);
+  }
+
+  // Accent anchor caps at floor & ceiling
+  const capMat = new THREE.MeshStandardMaterial({
+    color: primaryHex,
+    emissive: primaryHex,
+    emissiveIntensity: 1.25,
+    roughness: 0.55,
+    metalness: 0.2,
+  });
+  const capGeo = new THREE.BoxGeometry(0.95, 0.34, 1.05);
+  for (const xPos of [-2.95, 2.95]) {
+    for (const yPos of [-5.75, 5.75]) {
+      const cap = new THREE.Mesh(capGeo, capMat);
+      cap.position.set(xPos, yPos, 0);
+      group.add(cap);
+    }
+  }
+
+  // 2. Outer octagonal warp arch (XY plane facing +Z so craft flies cleanly through)
+  const archGeo = new THREE.TorusGeometry(4.4, 0.14, 10, 8);
+  const archMat = new THREE.MeshStandardMaterial({
+    color: primaryHex,
+    emissive: primaryHex,
+    emissiveIntensity: 1.35,
+    metalness: 0.4,
+    roughness: 0.3,
+  });
+  const arch = new THREE.Mesh(archGeo, archMat);
+  arch.scale.set(0.7, 1.22, 1);
+  group.add(arch);
+
+  // 3. Translucent vortex energy curtain inside portal
+  const membraneGeo = new THREE.RingGeometry(0.85, 4.25, 8);
+  const membraneMat = new THREE.MeshBasicMaterial({
+    color: primaryHex,
+    transparent: true,
+    opacity: 0.16,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const membrane = new THREE.Mesh(membraneGeo, membraneMat);
+  membrane.scale.set(0.7, 1.22, 1);
+  group.add(membrane);
+
+  // 4. Inner rotating gyroscope & directional symbol rotor
+  const rotor = new THREE.Group();
+
+  const innerRingGeo = new THREE.TorusGeometry(2.35, 0.085, 8, 24);
+  const innerRingMat = new THREE.MeshStandardMaterial({
+    color: secondaryHex,
+    emissive: secondaryHex,
+    emissiveIntensity: 1.5,
+    metalness: 0.35,
+    roughness: 0.28,
+  });
+  const innerRing = new THREE.Mesh(innerRingGeo, innerRingMat);
+  rotor.add(innerRing);
+
+  const markerMat = new THREE.MeshStandardMaterial({
+    color: secondaryHex,
+    emissive: secondaryHex,
+    emissiveIntensity: 1.65,
+    roughness: 0.25,
+    metalness: 0.3,
+  });
+
+  if (isShift) {
+    // 3D chevron arrowheads clearly pointing left (-X) or right (+X)
+    const dir = obs.warpEffect === 'shiftRight' ? 1 : -1;
+    const coneGeo = new THREE.ConeGeometry(0.32, 0.72, 4);
+    coneGeo.rotateZ(-dir * (Math.PI / 2));
+    for (const xOff of [-1.0, 0, 1.0]) {
+      const arrow = new THREE.Mesh(coneGeo, markerMat);
+      arrow.position.set(xOff, 0, 0);
+      rotor.add(arrow);
+    }
+  } else if (isInvert) {
+    // Twin opposing vertical invert-prisms + tilted orbit ring
+    const tiltRing = new THREE.Mesh(new THREE.TorusGeometry(1.75, 0.06, 8, 20), archMat);
+    tiltRing.rotation.x = Math.PI / 3;
+    rotor.add(tiltRing);
+
+    const triGeo = new THREE.ConeGeometry(0.36, 0.85, 3);
+    const topArrow = new THREE.Mesh(triGeo, markerMat);
+    topArrow.position.set(0, 2.7, 0);
+    topArrow.rotation.z = Math.PI;
+    rotor.add(topArrow);
+
+    const botArrow = new THREE.Mesh(triGeo, markerMat);
+    botArrow.position.set(0, -2.7, 0);
+    rotor.add(botArrow);
+  } else {
+    // Twin opposing horizontal flank mirrors + tilted indigo ring
+    const tiltRing = new THREE.Mesh(new THREE.TorusGeometry(1.85, 0.06, 8, 20), archMat);
+    tiltRing.rotation.y = Math.PI / 3;
+    rotor.add(tiltRing);
+
+    const coneGeo = new THREE.ConeGeometry(0.34, 0.78, 4);
+    const leftChevron = new THREE.Mesh(coneGeo, markerMat);
+    leftChevron.position.set(-2.2, 0, 0);
+    leftChevron.rotation.z = -Math.PI / 2;
+    rotor.add(leftChevron);
+
+    const rightChevron = new THREE.Mesh(coneGeo, markerMat);
+    rightChevron.position.set(2.2, 0, 0);
+    rightChevron.rotation.z = Math.PI / 2;
+    rotor.add(rightChevron);
+  }
+
+  group.add(rotor);
+  return { group, rotor, membraneMat };
+}
+

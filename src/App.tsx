@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Zap } from 'lucide-react';
+import { AlertTriangle, FlipVertical, Radio, Shield, Sun, Zap } from 'lucide-react';
 import { soundEngine } from './audio/soundEngine';
 import { LevelCompleteModal } from './components/LevelCompleteModal';
 import { LevelSelectModal } from './components/LevelSelectModal';
@@ -7,13 +7,36 @@ import { TopHud } from './components/TopHud';
 import { CRAFT_SKINS, ENDLESS_LEVEL_BASE, LEVELS } from './levels/levelData';
 import { ZigzagEngine } from './three/ZigzagEngine';
 import {
+  AdvancementsState,
   CameraMode,
   CraftSkin,
+  DailyChallengeState,
+  EnvEventType,
   GameMode,
   HudSnapshot,
   LevelDefinition,
   LevelProgressRecord,
+  UpgradeId,
+  UpgradeLevels,
 } from './types/game';
+import {
+  ADVANCEMENTS,
+  UPGRADES,
+  applyCareerEvent,
+  getMaxUpgradeLevel,
+  getStatForAdvancement,
+  getUpgradeCost,
+  loadAdvancementsState,
+  loadUpgradeLevels,
+  saveAdvancementsState,
+  saveUpgradeLevels,
+} from './utils/advancements';
+import {
+  applyChallengeEvent,
+  loadOrCreateDailyState,
+  saveDailyState,
+} from './utils/dailyChallenges';
+import { scrambleGlitchText } from './utils/glitchText';
 
 const PROGRESS_STORAGE_KEY = 'cyber_trench_progress_v2';
 
@@ -50,6 +73,46 @@ function loadSavedData(): SavedStorageData {
   };
 }
 
+const ENV_EVENT_UI: Record<
+  EnvEventType,
+  {
+    title: string;
+    warningText: string;
+    activeText: string;
+    borderClass: string;
+    textClass: string;
+  }
+> = {
+  glitchStorm: {
+    title: 'GLITCH STORM',
+    warningText: 'Telemetry disruption inbound',
+    activeText: 'HUD telemetry scrambled',
+    borderClass: 'border-fuchsia-400/70',
+    textClass: 'text-fuchsia-300',
+  },
+  gravityShift: {
+    title: 'GRAVITY SHIFT',
+    warningText: 'Polarization flip imminent',
+    activeText: 'Hold / Release controls inverted!',
+    borderClass: 'border-rose-400/75',
+    textClass: 'text-rose-300',
+  },
+  solarFlare: {
+    title: 'SOLAR FLARE',
+    warningText: 'Thermal surge inbound',
+    activeText: '1.5x Gold & Power Charge surge',
+    borderClass: 'border-amber-400/70',
+    textClass: 'text-amber-300',
+  },
+  magTurbulence: {
+    title: 'MAG TURBULENCE',
+    warningText: 'Flux eddies forming ahead',
+    activeText: 'Magnetic eddies · +50% Charge',
+    borderClass: 'border-cyan-400/70',
+    textClass: 'text-cyan-300',
+  },
+};
+
 export default function App() {
   const initialSaved = useMemo(() => loadSavedData(), []);
 
@@ -66,12 +129,23 @@ export default function App() {
   const [totalGold, setTotalGold] = useState<number>(initialSaved.totalGold);
   const [endlessBest, setEndlessBest] = useState<number>(initialSaved.endlessBest);
   const [selectedSkinId, setSelectedSkinId] = useState<string>(initialSaved.selectedSkinId);
+  const [dailyState, setDailyState] = useState<DailyChallengeState>(() => loadOrCreateDailyState());
+  const [upgrades, setUpgrades] = useState<UpgradeLevels>(() => loadUpgradeLevels());
+  const [advancementsState, setAdvancementsState] = useState<AdvancementsState>(() =>
+    loadAdvancementsState()
+  );
+  const [dailyBanner, setDailyBanner] = useState<string | null>(null);
 
   const [muted, setMuted] = useState<boolean>(() => soundEngine.isMuted());
   const [bloomEnabled, setBloomEnabled] = useState<boolean>(true);
   const [cameraMode, setCameraMode] = useState<CameraMode>('isometric');
   const [showLevelSelect, setShowLevelSelect] = useState<boolean>(false);
   const [showCompleteModal, setShowCompleteModal] = useState<boolean>(false);
+  const [glitchTick, setGlitchTick] = useState<number | null>(null);
+  const [reducedMotion, setReducedMotion] = useState<boolean>(() =>
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
 
   const [hud, setHud] = useState<HudSnapshot>({
     phase: 'ready',
@@ -92,7 +166,13 @@ export default function App() {
     powerActiveRemaining: 0,
     powerDuration: CRAFT_SKINS[0].powerDuration,
     shieldActive: false,
+    shieldCharges: 0,
     musicIntensity: 0.15,
+    activeWarpEffect: null,
+    activeWarpRemaining: 0,
+    envEventType: null,
+    envEventPhase: 'idle',
+    envEventRemaining: 0,
   });
 
   const activeInputsRef = useRef<Set<string>>(new Set());
@@ -100,11 +180,22 @@ export default function App() {
   currentLevelRef.current = currentLevel;
   const gameModeRef = useRef<GameMode>(gameMode);
   gameModeRef.current = gameMode;
+  const upgradesRef = useRef<UpgradeLevels>(upgrades);
+  upgradesRef.current = upgrades;
 
   const selectedSkin = useMemo(
     () => CRAFT_SKINS.find((s) => s.id === selectedSkinId) ?? CRAFT_SKINS[0],
     [selectedSkinId]
   );
+
+  // Track OS reduced-motion preference
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = (e: MediaQueryListEvent) => setReducedMotion(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
 
   // Persist save data
   useEffect(() => {
@@ -180,9 +271,14 @@ export default function App() {
           setTotalGold((prev) => prev + snapshot.score);
           setShowCompleteModal(true);
         },
+        onChallengeEvent: (event) => {
+          setDailyState((prev) => applyChallengeEvent(prev, event).nextState);
+          setAdvancementsState((prev) => applyCareerEvent(prev, event, upgradesRef.current).nextState);
+        },
       }
     );
 
+    engine.setUpgrades(upgradesRef.current);
     engineRef.current = engine;
 
     return () => {
@@ -199,6 +295,30 @@ export default function App() {
   useEffect(() => {
     engineRef.current?.setSkin(selectedSkin);
   }, [selectedSkin]);
+
+  useEffect(() => {
+    engineRef.current?.setUpgrades(upgrades);
+  }, [upgrades]);
+
+  // Glitch Storm UI scramble interval (only active during Glitch Storm)
+  const isGlitchActive =
+    hud.phase === 'playing' &&
+    hud.envEventPhase === 'active' &&
+    hud.envEventType === 'glitchStorm' &&
+    !showLevelSelect &&
+    !showCompleteModal;
+
+  useEffect(() => {
+    if (!isGlitchActive) {
+      setGlitchTick(null);
+      return;
+    }
+    setGlitchTick(1);
+    const intervalId = window.setInterval(() => {
+      setGlitchTick((prev) => (prev === null ? 1 : (prev % 997) + 1));
+    }, 95);
+    return () => window.clearInterval(intervalId);
+  }, [isGlitchActive]);
 
   const syncHoldingState = useCallback(() => {
     const isAnyHeld = activeInputsRef.current.size > 0;
@@ -279,6 +399,124 @@ export default function App() {
   const handleSelectSkin = useCallback((skin: CraftSkin) => {
     setSelectedSkinId(skin.id);
   }, []);
+
+  const prevCompletedIdsRef = useRef<Set<string>>(
+    new Set(
+      dailyState.tasks
+        .filter((t) => (dailyState.progress[t.id] ?? 0) >= t.target)
+        .map((t) => t.id)
+    )
+  );
+
+  useEffect(() => {
+    const newlyDone = dailyState.tasks.filter(
+      (t) =>
+        (dailyState.progress[t.id] ?? 0) >= t.target &&
+        !prevCompletedIdsRef.current.has(t.id)
+    );
+    if (newlyDone.length > 0) {
+      newlyDone.forEach((t) => prevCompletedIdsRef.current.add(t.id));
+      soundEngine.playCheckpoint();
+      setDailyBanner(`Daily Complete: ${newlyDone[0].title} (+${newlyDone[0].rewardGold})`);
+    }
+  }, [dailyState]);
+
+  const prevAdvIdsRef = useRef<Set<string>>(
+    new Set(
+      ADVANCEMENTS.filter(
+        (adv) => getStatForAdvancement(adv, advancementsState.stats) >= adv.target
+      ).map((adv) => adv.id)
+    )
+  );
+
+  useEffect(() => {
+    const newlyDone = ADVANCEMENTS.filter(
+      (adv) =>
+        getStatForAdvancement(adv, advancementsState.stats) >= adv.target &&
+        !prevAdvIdsRef.current.has(adv.id)
+    );
+    if (newlyDone.length > 0) {
+      newlyDone.forEach((adv) => prevAdvIdsRef.current.add(adv.id));
+      soundEngine.playCheckpoint();
+      setDailyBanner(`Advancement Unlocked: ${newlyDone[0].title} (+${newlyDone[0].rewardGold})`);
+    }
+  }, [advancementsState]);
+
+  const handleClaimChallenge = useCallback(
+    (taskId: string) => {
+      if (dailyState.claimedIds.includes(taskId)) return;
+      const task = dailyState.tasks.find((t) => t.id === taskId);
+      if (!task || (dailyState.progress[taskId] ?? 0) < task.target) return;
+
+      const nextState: DailyChallengeState = {
+        ...dailyState,
+        claimedIds: [...dailyState.claimedIds, taskId],
+      };
+      saveDailyState(nextState);
+      setDailyState(nextState);
+      setTotalGold((gold) => gold + task.rewardGold);
+      soundEngine.playCollectStar();
+    },
+    [dailyState]
+  );
+
+  const handleBuyUpgrade = useCallback(
+    (id: UpgradeId) => {
+      const def = UPGRADES.find((u) => u.id === id);
+      if (!def) return;
+      const currentLv = upgrades[id] ?? 0;
+      if (currentLv >= def.maxLevel) return;
+      const cost = getUpgradeCost(def, currentLv);
+      if (totalGold < cost) return;
+
+      const nextUpgrades: UpgradeLevels = {
+        ...upgrades,
+        [id]: currentLv + 1,
+      };
+      saveUpgradeLevels(nextUpgrades);
+      setUpgrades(nextUpgrades);
+      setTotalGold((gold) => Math.max(0, gold - cost));
+
+      const maxLv = getMaxUpgradeLevel(nextUpgrades);
+      setAdvancementsState((prev) => {
+        const nextState: AdvancementsState = {
+          ...prev,
+          stats: {
+            ...prev.stats,
+            maxUpgradeLevel: Math.max(prev.stats.maxUpgradeLevel, maxLv),
+          },
+        };
+        saveAdvancementsState(nextState);
+        return nextState;
+      });
+      soundEngine.playCollectStar();
+    },
+    [totalGold, upgrades]
+  );
+
+  const handleClaimAdvancement = useCallback(
+    (advId: string) => {
+      if (advancementsState.claimedIds.includes(advId)) return;
+      const adv = ADVANCEMENTS.find((a) => a.id === advId);
+      if (!adv || getStatForAdvancement(adv, advancementsState.stats) < adv.target) return;
+
+      const nextState: AdvancementsState = {
+        ...advancementsState,
+        claimedIds: [...advancementsState.claimedIds, advId],
+      };
+      saveAdvancementsState(nextState);
+      setAdvancementsState(nextState);
+      setTotalGold((gold) => gold + adv.rewardGold);
+      soundEngine.playCollectStar();
+    },
+    [advancementsState]
+  );
+
+  useEffect(() => {
+    if (!dailyBanner) return;
+    const timer = window.setTimeout(() => setDailyBanner(null), 2800);
+    return () => window.clearTimeout(timer);
+  }, [dailyBanner]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -367,6 +605,54 @@ export default function App() {
     ? Math.min(100, (hud.powerActiveRemaining / Math.max(0.1, hud.powerDuration)) * 100)
     : hud.powerCharge;
 
+  const claimableChallenges = useMemo(
+    () =>
+      dailyState.tasks.filter(
+        (t) =>
+          (dailyState.progress[t.id] ?? 0) >= t.target &&
+          !dailyState.claimedIds.includes(t.id)
+      ).length,
+    [dailyState]
+  );
+
+  const claimableAdvancements = useMemo(
+    () =>
+      ADVANCEMENTS.filter(
+        (adv) =>
+          getStatForAdvancement(adv, advancementsState.stats) >= adv.target &&
+          !advancementsState.claimedIds.includes(adv.id)
+      ).length,
+    [advancementsState]
+  );
+
+  const envEventUi = hud.envEventType ? ENV_EVENT_UI[hud.envEventType] : null;
+  const showEnvBanner =
+    hud.phase === 'playing' &&
+    hud.envEventPhase !== 'idle' &&
+    envEventUi !== null &&
+    !showLevelSelect &&
+    !showCompleteModal;
+
+  const shieldStatusLabel =
+    hud.shieldCharges > 0
+      ? selectedSkin.powerType === 'revive'
+        ? 'Revive Armed'
+        : `${hud.shieldCharges} ${hud.shieldCharges === 1 ? 'Shield' : 'Shields'}`
+      : hud.shieldActive
+        ? 'Barrier Active'
+        : null;
+
+  const powerNameDisplay =
+    glitchTick !== null
+      ? scrambleGlitchText(selectedSkin.powerName, glitchTick, 0.45)
+      : selectedSkin.powerName;
+
+  const powerValueDisplay = isPowerActive
+    ? `${hud.powerActiveRemaining.toFixed(1)}s`
+    : isPowerReady
+      ? 'E / Shift'
+      : `${hud.powerCharge}%`;
+
   return (
     <div
       className="relative h-screen w-screen overflow-hidden bg-[#060918] cursor-pointer"
@@ -386,9 +672,12 @@ export default function App() {
         hud={hud}
         totalGold={totalGold}
         endlessBest={endlessBest}
+        claimableChallenges={claimableChallenges + claimableAdvancements}
         muted={muted}
         bloomEnabled={bloomEnabled}
         cameraMode={cameraMode}
+        glitchTick={glitchTick}
+        reducedMotion={reducedMotion}
         onOpenLevels={() => {
           clearInputs();
           setShowLevelSelect(true);
@@ -399,16 +688,58 @@ export default function App() {
         onToggleCamera={handleToggleCamera}
       />
 
-      {/* Non-intrusive Event Callout (Near-Miss / Sector Milestone / Special Power) */}
-      {hud.calloutText && !showLevelSelect && !showCompleteModal && (
+      {/* Environmental Event Warning / Active Banner */}
+      {showEnvBanner && envEventUi && (
         <div className="pointer-events-none fixed top-16 left-1/2 z-20 -translate-x-1/2 sm:top-20">
-          <div className="rounded-lg border border-fuchsia-400/45 bg-[#090f28]/90 px-3.5 py-1 font-display text-xs font-bold tracking-wide text-fuchsia-200 shadow-lg">
-            {hud.calloutText}
+          <div
+            className={`flex items-center gap-2.5 rounded-xl border bg-[#090e24]/94 px-3.5 py-1.5 shadow-xl ${envEventUi.borderClass}`}
+          >
+            {hud.envEventType === 'gravityShift' ? (
+              <FlipVertical className={`h-4 w-4 shrink-0 ${envEventUi.textClass}`} />
+            ) : hud.envEventType === 'solarFlare' ? (
+              <Sun className={`h-4 w-4 shrink-0 ${envEventUi.textClass}`} />
+            ) : hud.envEventType === 'magTurbulence' ? (
+              <Radio className={`h-4 w-4 shrink-0 ${envEventUi.textClass}`} />
+            ) : (
+              <AlertTriangle className={`h-4 w-4 shrink-0 ${envEventUi.textClass}`} />
+            )}
+
+            <div className="flex items-center gap-2 text-xs whitespace-nowrap">
+              <span className={`font-display font-bold tracking-wide ${envEventUi.textClass}`}>
+                {hud.envEventPhase === 'warning' ? `WARNING · ${envEventUi.title}` : envEventUi.title}
+              </span>
+              <span className="text-slate-500" aria-hidden="true">·</span>
+              <span className="text-slate-200 font-medium hidden sm:inline">
+                {hud.envEventPhase === 'warning' ? envEventUi.warningText : envEventUi.activeText}
+              </span>
+              <span className="font-mono-num font-bold text-white">
+                {hud.envEventRemaining.toFixed(1)}s
+              </span>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Bottom-Left Special Power Trigger & Charge Gauge */}
+      {/* Non-intrusive Event Callout (Daily / Advancement / Near-Miss / Sector Milestone / Power) */}
+      {(dailyBanner || hud.calloutText) && !showLevelSelect && !showCompleteModal && (
+        <div
+          className={`pointer-events-none fixed left-1/2 z-20 -translate-x-1/2 ${
+            showEnvBanner ? 'top-26 sm:top-30' : 'top-16 sm:top-20'
+          }`}
+        >
+          <div
+            className={`rounded-lg border px-3.5 py-1 font-display text-xs font-bold tracking-wide shadow-lg whitespace-nowrap ${
+              dailyBanner
+                ? 'border-amber-400/60 bg-[#0d1229]/95 text-amber-300'
+                : 'border-fuchsia-400/45 bg-[#090f28]/90 text-fuchsia-200'
+            }`}
+          >
+            {dailyBanner ?? hud.calloutText}
+          </div>
+        </div>
+      )}
+
+      {/* Bottom-Left Special Power Trigger, Shield Charges & Charge Gauge */}
       {!showLevelSelect && !showCompleteModal && (
         <div
           className="fixed bottom-5 left-5 z-20 flex flex-col gap-2"
@@ -416,8 +747,28 @@ export default function App() {
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
         >
+          {hud.phase === 'playing' && shieldStatusLabel && (
+            <div className="pointer-events-none self-start flex items-center gap-1.5 rounded-lg border border-emerald-400/50 bg-[#090f28]/92 px-2.5 py-1 text-xs font-semibold text-emerald-300 font-mono-num whitespace-nowrap">
+              <Shield className="h-3.5 w-3.5 shrink-0" />
+              <span>{shieldStatusLabel}</span>
+            </div>
+          )}
+
+          {hud.phase === 'playing' && hud.activeWarpRemaining > 0 && hud.activeWarpEffect && (
+            <div className="pointer-events-none self-start rounded-lg border border-fuchsia-400/50 bg-[#090f28]/90 px-2.5 py-1 text-xs font-semibold text-fuchsia-200 font-mono-num whitespace-nowrap">
+              {hud.activeWarpEffect === 'shiftLeft'
+                ? 'X-Warp ←'
+                : hud.activeWarpEffect === 'shiftRight'
+                  ? 'X-Warp →'
+                  : hud.activeWarpEffect === 'invertCam'
+                    ? 'Inverted 180°'
+                    : 'Flank Flip'}{' '}
+              · {hud.activeWarpRemaining.toFixed(1)}s
+            </div>
+          )}
+
           {hud.phase === 'playing' && hud.activeSpeedMultiplier > 1.05 && (
-            <div className="pointer-events-none self-start rounded-lg border border-cyan-400/40 bg-[#090f28]/90 px-2.5 py-1 text-xs font-semibold text-cyan-300 font-mono-num">
+            <div className="pointer-events-none self-start rounded-lg border border-cyan-400/40 bg-[#090f28]/90 px-2.5 py-1 text-xs font-semibold text-cyan-300 font-mono-num whitespace-nowrap">
               {hud.activeSpeedMultiplier.toFixed(2)}x Speed
             </div>
           )}
@@ -444,15 +795,13 @@ export default function App() {
                     : 'text-slate-500'
               }`}
             />
-            <div className="min-w-[116px]">
-              <div className="flex items-center justify-between gap-2 text-xs font-semibold">
-                <span>{selectedSkin.powerName}</span>
+            <div className="min-w-[124px]">
+              <div className="flex items-center justify-between gap-2 text-xs font-semibold whitespace-nowrap">
+                <span>{powerNameDisplay}</span>
                 <span className="font-mono-num text-[11px] text-cyan-300">
-                  {isPowerActive
-                    ? `${hud.powerActiveRemaining.toFixed(1)}s`
-                    : isPowerReady
-                      ? 'E / Shift'
-                      : `${hud.powerCharge}%`}
+                  {glitchTick !== null
+                    ? scrambleGlitchText(powerValueDisplay, glitchTick, 0.5)
+                    : powerValueDisplay}
                 </span>
               </div>
               <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
@@ -504,7 +853,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Hangar: Modes, Courses & Avatars Modal */}
+      {/* Hangar: Modes, Courses, Advancements, Daily Challenges & Avatars Modal */}
       {showLevelSelect && (
         <LevelSelectModal
           currentLevelId={currentLevel.id}
@@ -513,9 +862,15 @@ export default function App() {
           progressMap={progressMap}
           totalGold={totalGold}
           selectedSkinId={selectedSkinId}
+          dailyState={dailyState}
+          upgrades={upgrades}
+          advancementsState={advancementsState}
           onSelectMode={handleSelectMode}
           onSelectLevel={handleSelectLevel}
           onSelectSkin={handleSelectSkin}
+          onClaimChallenge={handleClaimChallenge}
+          onBuyUpgrade={handleBuyUpgrade}
+          onClaimAdvancement={handleClaimAdvancement}
           onClose={() => setShowLevelSelect(false)}
         />
       )}
@@ -539,3 +894,4 @@ export default function App() {
     </div>
   );
 }
+

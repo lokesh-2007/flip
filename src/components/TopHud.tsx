@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { CameraMode, GameMode, HudSnapshot, LevelDefinition } from '../types/game';
 import { formatScore } from '../utils/formatters';
+import { scrambleGlitchText } from '../utils/glitchText';
 
 interface TopHudProps {
   level: LevelDefinition;
@@ -19,9 +20,12 @@ interface TopHudProps {
   hud: HudSnapshot;
   totalGold: number;
   endlessBest: number;
+  claimableChallenges: number;
   muted: boolean;
   bloomEnabled: boolean;
   cameraMode: CameraMode;
+  glitchTick: number | null;
+  reducedMotion?: boolean;
   onOpenLevels: () => void;
   onRestart: () => void;
   onToggleMute: () => void;
@@ -36,15 +40,18 @@ const MODE_LABELS: Record<GameMode, string> = {
   endless: 'Infinity',
 };
 
-export const TopHud: React.FC<TopHudProps> = ({
+const TopHudComponent: React.FC<TopHudProps> = ({
   level,
   mode,
   hud,
   totalGold,
   endlessBest,
+  claimableChallenges,
   muted,
   bloomEnabled,
   cameraMode,
+  glitchTick,
+  reducedMotion = false,
   onOpenLevels,
   onRestart,
   onToggleMute,
@@ -58,6 +65,19 @@ export const TopHud: React.FC<TopHudProps> = ({
   const starCount = hud.stars.filter(Boolean).length;
   const displayedGold = totalGold + hud.score;
   const isInfinity = mode === 'endless';
+  const isGlitch = glitchTick !== null;
+
+  const gx = (text: string, intensity = 0.5) =>
+    isGlitch ? scrambleGlitchText(text, glitchTick, intensity) : text;
+
+  const jitterStyle = (seed: number): React.CSSProperties | undefined => {
+    if (!isGlitch || reducedMotion) return undefined;
+    const dx = (((glitchTick + seed) * 7) % 5) - 2;
+    const dy = (((glitchTick + seed) * 3) % 3) - 1;
+    return {
+      transform: `translate3d(${dx}px, ${dy}px, 0)`,
+    };
+  };
 
   return (
     <header
@@ -71,12 +91,17 @@ export const TopHud: React.FC<TopHudProps> = ({
         <button
           type="button"
           onClick={onOpenLevels}
-          title="Courses, Modes & Avatars"
-          aria-label="Open Course and Avatar Select"
-          className="flex h-10 items-center gap-2 rounded-lg border border-white/15 bg-[#0a0f26]/90 px-3 text-xs font-semibold text-slate-200 transition-colors hover:border-cyan-400/60 hover:text-cyan-300 focus-visible:outline-2 focus-visible:outline-cyan-400 whitespace-nowrap"
+          title="Courses, Advancements, Daily Challenges & Avatars"
+          aria-label="Open Course, Advancements, Daily Challenges and Avatar Select"
+          className="relative flex h-10 items-center gap-2 rounded-lg border border-white/15 bg-[#0a0f26]/90 px-3 text-xs font-semibold text-slate-200 transition-colors hover:border-cyan-400/60 hover:text-cyan-300 focus-visible:outline-2 focus-visible:outline-cyan-400 whitespace-nowrap"
         >
           <LayoutGrid className="h-4 w-4" />
-          <span className="hidden md:inline">{MODE_LABELS[mode]}</span>
+          <span className="hidden md:inline">{gx(MODE_LABELS[mode], 0.35)}</span>
+          {claimableChallenges > 0 && (
+            <span className="ml-0.5 rounded bg-amber-400 px-1.5 py-0.5 font-mono-num text-[10px] font-bold leading-none text-slate-950">
+              {claimableChallenges}
+            </span>
+          )}
         </button>
 
         <button
@@ -126,20 +151,25 @@ export const TopHud: React.FC<TopHudProps> = ({
       </div>
 
       {/* Top-Center: Progress Bar or Infinity Mode Sector & Distance */}
-      <div className="pointer-events-auto flex flex-1 max-w-md flex-col items-center gap-1.5 rounded-xl border border-white/15 bg-[#0a0f26]/88 px-4 py-2">
+      <div
+        style={jitterStyle(1)}
+        className={`pointer-events-auto flex flex-1 max-w-md flex-col items-center gap-1.5 rounded-xl border bg-[#0a0f26]/88 px-4 py-2 transition-colors ${
+          isGlitch ? 'border-fuchsia-400/65' : 'border-white/15'
+        }`}
+      >
         {isInfinity ? (
           <>
             <div className="flex w-full items-center justify-between text-xs font-medium tracking-wide text-slate-300">
               <span className="truncate font-display text-slate-100">
-                Infinity Mode{' '}
+                {gx('Infinity Mode', 0.45)}{' '}
                 <span className="ml-1.5 text-fuchsia-300">
-                  · Sector {String(hud.sector).padStart(2, '0')}
+                  · {gx(`Sector ${String(hud.sector).padStart(2, '0')}`, 0.55)}
                 </span>
               </span>
               <span className="font-mono-num text-cyan-300 font-bold">
-                {hud.distance}m{' '}
+                {gx(`${hud.distance}m`, 0.5)}{' '}
                 <span className="text-slate-400 font-normal">
-                  · Best {Math.max(endlessBest, hud.distance)}m
+                  · {gx(`Best ${Math.max(endlessBest, hud.distance)}m`, 0.4)}
                 </span>
               </span>
             </div>
@@ -148,7 +178,11 @@ export const TopHud: React.FC<TopHudProps> = ({
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-fuchsia-400 to-amber-300 transition-[width] duration-75"
                   style={{
-                    width: `${Math.min(100, ((hud.distance % 250) / 250) * 100)}%`,
+                    width: `${
+                      isGlitch
+                        ? (glitchTick * 37) % 100
+                        : Math.min(100, ((hud.distance % 250) / 250) * 100)
+                    }%`,
                   }}
                 />
               </div>
@@ -159,13 +193,13 @@ export const TopHud: React.FC<TopHudProps> = ({
           <>
             <div className="flex w-full items-center justify-between text-xs font-medium tracking-wide text-slate-300">
               <span className="truncate font-display text-slate-100">
-                {level.number}. {level.name}
+                {gx(`${level.number}. ${level.name}`, 0.45)}
                 {mode !== 'classic' && (
-                  <span className="ml-2 text-amber-300">· {MODE_LABELS[mode]}</span>
+                  <span className="ml-2 text-amber-300">· {gx(MODE_LABELS[mode], 0.45)}</span>
                 )}
               </span>
               <span className="font-mono-num text-cyan-300 font-bold">
-                {hud.percent}%
+                {gx(`${hud.percent}%`, 0.55)}
               </span>
             </div>
 
@@ -173,7 +207,9 @@ export const TopHud: React.FC<TopHudProps> = ({
               <div className="relative h-2.5 flex-1 overflow-hidden rounded-full border border-white/15 bg-[#070b1e]/95">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-sky-400 to-fuchsia-400 transition-[width] duration-75"
-                  style={{ width: `${hud.percent}%` }}
+                  style={{
+                    width: `${isGlitch ? (glitchTick * 43) % 100 : hud.percent}%`,
+                  }}
                 />
                 {mode !== 'hardcore' &&
                   level.checkpoints.map((cp) => {
@@ -194,7 +230,12 @@ export const TopHud: React.FC<TopHudProps> = ({
       </div>
 
       {/* Top-Right: Stars, Streak & Gold Score Counters */}
-      <div className="pointer-events-auto flex items-center gap-3.5 sm:gap-4 shrink-0 rounded-lg border border-white/15 bg-[#0a0f26]/90 px-3.5 py-2">
+      <div
+        style={jitterStyle(2)}
+        className={`pointer-events-auto flex items-center gap-3.5 sm:gap-4 shrink-0 rounded-lg border bg-[#0a0f26]/90 px-3.5 py-2 transition-colors ${
+          isGlitch ? 'border-fuchsia-400/65' : 'border-white/15'
+        }`}
+      >
         {!isInfinity && (
           <>
             <div className="flex items-center gap-1.5" title="Sector Stars Collected">
@@ -204,7 +245,7 @@ export const TopHud: React.FC<TopHudProps> = ({
                 }`}
               />
               <span className="font-mono-num text-sm font-bold text-slate-100">
-                {starCount}/3
+                {gx(`${starCount}/3`, 0.4)}
               </span>
             </div>
             <span className="h-4 w-px bg-white/15" aria-hidden="true" />
@@ -217,11 +258,11 @@ export const TopHud: React.FC<TopHudProps> = ({
             aria-hidden="true"
           />
           <span className="font-mono-num text-sm font-bold text-amber-300">
-            {formatScore(displayedGold)}
+            {gx(formatScore(displayedGold), 0.5)}
           </span>
           {hud.streakMultiplier > 1 && (
             <span className="ml-0.5 font-mono-num text-xs font-bold text-fuchsia-300">
-              {hud.streakMultiplier.toFixed(1)}x
+              {gx(`${hud.streakMultiplier.toFixed(1)}x`, 0.4)}
             </span>
           )}
         </div>
@@ -229,3 +270,6 @@ export const TopHud: React.FC<TopHudProps> = ({
     </header>
   );
 };
+
+export const TopHud = React.memo(TopHudComponent);
+

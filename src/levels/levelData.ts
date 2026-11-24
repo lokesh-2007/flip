@@ -12,6 +12,7 @@ export const CRAFT_SKINS: CraftSkin[] = [
     id: 'cyan-pulse',
     name: 'Gyro Orb',
     shape: 'gyro',
+    role: 'defense',
     coreColor: 0x00f5d4,
     trailColor: 0x22d3ee,
     cssSwatch: '#22d3ee',
@@ -25,6 +26,7 @@ export const CRAFT_SKINS: CraftSkin[] = [
     id: 'solar-amber',
     name: 'Solar Dart',
     shape: 'dart',
+    role: 'utility',
     coreColor: 0xfbbf24,
     trailColor: 0xf59e0b,
     cssSwatch: '#f59e0b',
@@ -38,6 +40,7 @@ export const CRAFT_SKINS: CraftSkin[] = [
     id: 'volt-shuriken',
     name: 'Volt Shuriken',
     shape: 'shuriken',
+    role: 'offense',
     coreColor: 0x818cf8,
     trailColor: 0x6366f1,
     cssSwatch: '#818cf8',
@@ -51,6 +54,7 @@ export const CRAFT_SKINS: CraftSkin[] = [
     id: 'cobalt-viper',
     name: 'Cobalt Viper',
     shape: 'viper',
+    role: 'utility',
     coreColor: 0x38bdf8,
     trailColor: 0x0284c7,
     cssSwatch: '#38bdf8',
@@ -61,22 +65,66 @@ export const CRAFT_SKINS: CraftSkin[] = [
     powerDuration: 3.0,
   },
   {
+    id: 'aegis-bulwark',
+    name: 'Aegis Bulwark',
+    shape: 'aegis',
+    role: 'defense',
+    coreColor: 0x2dd4bf,
+    trailColor: 0x0d9488,
+    cssSwatch: '#2dd4bf',
+    unlockGold: 950,
+    powerType: 'aegis',
+    powerName: 'Aegis Fortress',
+    powerDescription: 'Deploys a 2-hit armored barrier for 10.0s that shatters colliding hazards with a shockwave.',
+    powerDuration: 10.0,
+  },
+  {
     id: 'hyper-violet',
     name: 'Prism Star',
     shape: 'prism',
+    role: 'defense',
     coreColor: 0xe879f9,
     trailColor: 0xc026d3,
     cssSwatch: '#e879f9',
     unlockGold: 1200,
     powerType: 'slowmo',
     powerName: 'Chrono Slow',
-    powerDescription: 'Dilates trench speed to 0.62x for 4.2s for pinpoint threading.',
+    powerDescription: 'Dilates trench speed to 0.62x for 4.2s for pinpoint defensive threading.',
     powerDuration: 4.2,
+  },
+  {
+    id: 'inferno-reaper',
+    name: 'Inferno Reaper',
+    shape: 'reaper',
+    role: 'offense',
+    coreColor: 0xf97316,
+    trailColor: 0xef4444,
+    cssSwatch: '#f97316',
+    unlockGold: 1600,
+    powerType: 'barrage',
+    powerName: 'Plasma Barrage',
+    powerDescription: 'Fires rapid homing plasma rockets for 4.2s that obliterate obstacles ahead for +100 Gold.',
+    powerDuration: 4.2,
+  },
+  {
+    id: 'chrono-bastion',
+    name: 'Chrono Bastion',
+    shape: 'bastion',
+    role: 'defense',
+    coreColor: 0x60a5fa,
+    trailColor: 0x2563eb,
+    cssSwatch: '#60a5fa',
+    unlockGold: 2200,
+    powerType: 'stasis',
+    powerName: 'Stasis Field',
+    powerDescription: 'Slows trench velocity to 0.56x while projecting a 1-hit emergency shield for 5.5s.',
+    powerDuration: 5.5,
   },
   {
     id: 'crimson-apex',
     name: 'Apex Scythe',
     shape: 'scythe',
+    role: 'offense',
     coreColor: 0xfb7185,
     trailColor: 0xf43f5e,
     cssSwatch: '#fb7185',
@@ -87,9 +135,24 @@ export const CRAFT_SKINS: CraftSkin[] = [
     powerDuration: 3.6,
   },
   {
+    id: 'sentinel-ward',
+    name: 'Sentinel Ward',
+    shape: 'sentinel',
+    role: 'defense',
+    coreColor: 0x38bdf8,
+    trailColor: 0x4f46e5,
+    cssSwatch: '#4f46e5',
+    unlockGold: 3400,
+    powerType: 'deflect',
+    powerName: 'Mirror Deflector',
+    powerDescription: 'Absorbs 1 hit and vaporizes nearby hazards within 3.0m into +125 Gold for 7.5s.',
+    powerDuration: 7.5,
+  },
+  {
     id: 'crimson-lotus',
     name: 'Crimson Lotus',
     shape: 'lotus',
+    role: 'utility',
     coreColor: 0xf472b6,
     trailColor: 0xdb2777,
     cssSwatch: '#f472b6',
@@ -100,9 +163,24 @@ export const CRAFT_SKINS: CraftSkin[] = [
     powerDuration: 5.5,
   },
   {
+    id: 'void-annihilator',
+    name: 'Void Annihilator',
+    shape: 'annihilator',
+    role: 'offense',
+    coreColor: 0xc084fc,
+    trailColor: 0x9333ea,
+    cssSwatch: '#c084fc',
+    unlockGold: 4800,
+    powerType: 'smash',
+    powerName: 'Meteor Smash',
+    powerDescription: 'Encases craft in a 2.2m demolition aura for 3.8s, shattering ALL hazards including spikes.',
+    powerDuration: 3.8,
+  },
+  {
     id: 'emerald-phantom',
     name: 'Jade Phantom',
     shape: 'phantom',
+    role: 'defense',
     coreColor: 0x34d399,
     trailColor: 0x10b981,
     cssSwatch: '#34d399',
@@ -113,12 +191,27 @@ export const CRAFT_SKINS: CraftSkin[] = [
     powerDuration: 2.8,
   },
   {
+    id: 'phoenix-core',
+    name: 'Phoenix Core',
+    shape: 'phoenix',
+    role: 'defense',
+    coreColor: 0xfb7185,
+    trailColor: 0xf59e0b,
+    cssSwatch: '#fb923c',
+    unlockGold: 6400,
+    powerType: 'revive',
+    powerName: 'Second Wind',
+    powerDescription: 'Arms a 12.0s revival matrix: fatal impact erupts in a 9.5m blast clearing all hazards.',
+    powerDuration: 12.0,
+  },
+  {
     id: 'obsidian-titan',
     name: 'Obsidian Titan',
     shape: 'titan',
+    role: 'offense',
     coreColor: 0xfb923c,
     trailColor: 0xea580c,
-    cssSwatch: '#fb923c',
+    cssSwatch: '#ea580c',
     unlockGold: 7200,
     powerType: 'pulse',
     powerName: 'Titan EMP',
@@ -129,6 +222,7 @@ export const CRAFT_SKINS: CraftSkin[] = [
     id: 'nova-crown',
     name: 'Nova Crown',
     shape: 'nova',
+    role: 'utility',
     coreColor: 0xfef08a,
     trailColor: 0x38bdf8,
     cssSwatch: '#fde047',
@@ -225,6 +319,8 @@ export const LEVELS: LevelDefinition[] = [
       { id: 'l1_s1', type: 'spikes', zStart: 88, zEnd: 108, placement: 'floor', height: 1.5 },
       // Mid spinning saw -> choose upper or lower lane
       { id: 'l1_saw1', type: 'saw', z: 126, y: 6.0, radius: 1.65, spinSpeed: 3.2 },
+      // Spatial X-displacement warp gate after checkpoint
+      { id: 'l1_wg1', type: 'warpGate', z: 150, warpEffect: 'shiftRight', duration: 3.8 },
       // Ceiling spikes after checkpoint
       { id: 'l1_s2', type: 'spikes', zStart: 162, zEnd: 184, placement: 'ceiling', height: 1.5 },
       // Twin gate blocks (wide 4.8-unit center window)
@@ -276,7 +372,8 @@ export const LEVELS: LevelDefinition[] = [
       { id: 'l2_sp1', type: 'spikes', zStart: 72, zEnd: 94, placement: 'floor', height: 1.6 },
       { id: 'l2_saw1', type: 'saw', z: 83, y: 8.8, radius: 1.55, spinSpeed: 3.8 },
       { id: 'l2_sp2', type: 'spikes', zStart: 98, zEnd: 114, placement: 'ceiling', height: 1.6 },
-      // Section 2: Twin offset saws
+      // Section 2: X-axis warp + twin offset saws
+      { id: 'l2_wg1', type: 'warpGate', z: 130, warpEffect: 'shiftLeft', duration: 4.0 },
       { id: 'l2_saw2', type: 'saw', z: 144, y: 4.2, radius: 1.7, spinSpeed: -4.0 },
       { id: 'l2_saw3', type: 'saw', z: 164, y: 8.2, radius: 1.7, spinSpeed: 4.0 },
       // Narrow gate window
@@ -285,12 +382,14 @@ export const LEVELS: LevelDefinition[] = [
       // Center block split
       { id: 'l2_mid', type: 'block', z: 218, y: 6.0, width: 5.2, height: 3.4, shape: 'rect' },
       { id: 'l2_sp3', type: 'spikes', zStart: 212, zEnd: 226, placement: 'floor', height: 1.4 },
-      // Section 3: Star mine debut + final saw corridor
-      { id: 'l2_sm1', type: 'starMine', z: 268, y: 6.0, radius: 1.6, spinSpeed: 3.2 },
-      { id: 'l2_sp4', type: 'spikes', zStart: 286, zEnd: 312, placement: 'ceiling', height: 1.6 },
-      { id: 'l2_b3', type: 'block', z: 299, y: 2.3, width: 4.8, height: 4.2, shape: 'tBottom' },
-      { id: 'l2_saw4', type: 'saw', z: 332, y: 7.5, radius: 1.75, spinSpeed: -4.2 },
-      { id: 'l2_saw5', type: 'saw', z: 332, y: 2.4, radius: 1.35, spinSpeed: 4.2 },
+      // Section 3: Flank mirror warp + Patrol drone & star mine
+      { id: 'l2_wg2', type: 'warpGate', z: 248, warpEffect: 'mirrorCam', duration: 4.0 },
+      { id: 'l2_pd1', type: 'patrolDrone', z: 258, baseY: 6.0, ampY: 2.8, speed: 2.2, radius: 1.2 },
+      { id: 'l2_sm1', type: 'starMine', z: 274, y: 6.0, radius: 1.55, spinSpeed: 3.2 },
+      { id: 'l2_sp4', type: 'spikes', zStart: 290, zEnd: 314, placement: 'ceiling', height: 1.6 },
+      { id: 'l2_b3', type: 'block', z: 302, y: 2.3, width: 4.8, height: 4.2, shape: 'tBottom' },
+      { id: 'l2_saw4', type: 'saw', z: 334, y: 7.5, radius: 1.75, spinSpeed: -4.2 },
+      { id: 'l2_saw5', type: 'saw', z: 334, y: 2.4, radius: 1.35, spinSpeed: 4.2 },
     ],
     collectibles: [
       ...goldLine(16, 4.5, 28, 3.0, 4),
@@ -335,22 +434,25 @@ export const LEVELS: LevelDefinition[] = [
       { id: 'l3_sp1', type: 'spikes', zStart: 92, zEnd: 120, placement: 'floor', height: 1.7 },
       { id: 'l3_b1', type: 'block', z: 106, y: 9.8, width: 5.5, height: 3.6, shape: 'tTop' },
       { id: 'l3_saw1', type: 'saw', z: 128, y: 6.0, radius: 1.65, spinSpeed: 4.0 },
-      // Overdrive speed gate (1.25x)
+      // Overdrive speed gate (1.25x) + Inverted camera warp
       { id: 'l3_sg1', type: 'speedGate', z: 162, multiplier: 1.25 },
-      // Fast overdrive wide-flow obstacles
-      { id: 'l3_b2', type: 'block', z: 190, y: 2.2, width: 4.5, height: 4.4, shape: 'rect' },
-      { id: 'l3_b3', type: 'block', z: 218, y: 9.8, width: 4.5, height: 4.4, shape: 'rect' },
-      { id: 'l3_sm4', type: 'starMine', z: 246, y: 5.8, radius: 1.75, spinSpeed: -4.2 },
+      { id: 'l3_wg1', type: 'warpGate', z: 169, warpEffect: 'invertCam', duration: 4.2 },
+      // Angled laser chute + patrol drone
+      { id: 'l3_lb1', type: 'laserBar', z1: 178, y1: 11.2, z2: 186, y2: 6.8, thickness: 0.24 },
+      { id: 'l3_b2', type: 'block', z: 196, y: 2.2, width: 4.5, height: 4.2, shape: 'rect' },
+      { id: 'l3_b3', type: 'block', z: 220, y: 9.8, width: 4.5, height: 4.2, shape: 'rect' },
+      { id: 'l3_pd1', type: 'patrolDrone', z: 244, baseY: 6.0, ampY: 3.0, speed: 2.5, radius: 1.25 },
       { id: 'l3_sp2', type: 'spikes', zStart: 262, zEnd: 282, placement: 'ceiling', height: 1.7 },
-      // Normalize speed at checkpoint 2
+      // Normalize speed at checkpoint 2 + X-shift warp
       { id: 'l3_sg2', type: 'speedGate', z: 298, multiplier: 1.0 },
-      // Precision T-gate weave
-      { id: 'l3_b4', type: 'block', z: 326, y: 9.0, width: 6.0, height: 4.8, shape: 'tTop' },
-      { id: 'l3_sp3', type: 'spikes', zStart: 320, zEnd: 342, placement: 'floor', height: 1.4 },
-      { id: 'l3_saw2', type: 'saw', z: 360, y: 4.2, radius: 1.75, spinSpeed: 4.5 },
-      { id: 'l3_sm5', type: 'starMine', z: 382, y: 8.4, radius: 1.7, spinSpeed: -4.5 },
-      { id: 'l3_g_t', type: 'block', z: 406, y: 10.1, width: 4.0, height: 3.8, shape: 'rect' },
-      { id: 'l3_g_b', type: 'block', z: 406, y: 1.9, width: 4.0, height: 3.8, shape: 'rect' },
+      { id: 'l3_wg2', type: 'warpGate', z: 306, warpEffect: 'shiftRight', duration: 4.2 },
+      // Precision T-gate weave + Binary Orbit Mine
+      { id: 'l3_b4', type: 'block', z: 324, y: 9.0, width: 5.8, height: 4.6, shape: 'tTop' },
+      { id: 'l3_sp3', type: 'spikes', zStart: 318, zEnd: 338, placement: 'floor', height: 1.4 },
+      { id: 'l3_om1', type: 'orbitMine', z: 356, y: 6.0, orbitRadius: 2.4, mineRadius: 0.78, spinSpeed: 2.6 },
+      { id: 'l3_sm5', type: 'starMine', z: 384, y: 8.4, radius: 1.7, spinSpeed: -4.5 },
+      { id: 'l3_g_t', type: 'block', z: 408, y: 10.1, width: 4.0, height: 3.8, shape: 'rect' },
+      { id: 'l3_g_b', type: 'block', z: 408, y: 1.9, width: 4.0, height: 3.8, shape: 'rect' },
     ],
     collectibles: [
       ...goldLine(24, 7.5, 44, 7.5, 4),
@@ -393,20 +495,23 @@ export const LEVELS: LevelDefinition[] = [
       { id: 'l4_sp1', type: 'spikes', zStart: 25, zEnd: 46, placement: 'floor', height: 1.5 },
       { id: 'l4_b2', type: 'block', z: 62, y: 2.5, width: 5.2, height: 4.5, shape: 'tBottom' },
       { id: 'l4_sp2', type: 'spikes', zStart: 56, zEnd: 76, placement: 'ceiling', height: 1.5 },
-      { id: 'l4_saw1', type: 'saw', z: 96, y: 6.0, radius: 1.9, spinSpeed: 4.6 },
-      // Sector 2: Double star mines
+      { id: 'l4_rg1', type: 'rotaryGate', z: 104, y: 6.0, armLength: 3.8, blades: 2, spinSpeed: 2.3 },
+      // Sector 2: X-shift warp + Double star mines + diagonal laser barrier
+      { id: 'l4_wg1', type: 'warpGate', z: 134, warpEffect: 'shiftLeft', duration: 4.4 },
       { id: 'l4_sm1', type: 'starMine', z: 152, y: 8.6, radius: 1.65, spinSpeed: 4.0 },
       { id: 'l4_sm2', type: 'starMine', z: 152, y: 3.4, radius: 1.65, spinSpeed: -4.0 },
       { id: 'l4_b3', type: 'block', z: 184, y: 6.0, width: 6.0, height: 3.6, shape: 'rect' },
-      { id: 'l4_sp3', type: 'spikes', zStart: 198, zEnd: 230, placement: 'floor', height: 1.65 },
-      { id: 'l4_saw2', type: 'saw', z: 214, y: 8.8, radius: 1.6, spinSpeed: -4.4 },
-      // Sector 3: Overdrive rush
+      { id: 'l4_sp3', type: 'spikes', zStart: 198, zEnd: 226, placement: 'floor', height: 1.65 },
+      { id: 'l4_saw2', type: 'saw', z: 212, y: 8.8, radius: 1.6, spinSpeed: -4.4 },
+      { id: 'l4_lb1', type: 'laserBar', z1: 234, y1: 0.9, z2: 242, y2: 5.0, thickness: 0.24 },
+      // Sector 3: Overdrive rush + patrol drone + orbit mine
       { id: 'l4_sg1', type: 'speedGate', z: 270, multiplier: 1.3 },
-      { id: 'l4_sm3', type: 'starMine', z: 298, y: 4.5, radius: 1.7, spinSpeed: 4.8 },
-      { id: 'l4_sm4', type: 'starMine', z: 326, y: 7.8, radius: 1.7, spinSpeed: -4.8 },
-      { id: 'l4_b4', type: 'block', z: 356, y: 2.0, width: 4.8, height: 4.0, shape: 'rect' },
+      { id: 'l4_pd1', type: 'patrolDrone', z: 298, baseY: 6.0, ampY: 3.1, speed: 2.7, radius: 1.3 },
+      { id: 'l4_om1', type: 'orbitMine', z: 332, y: 6.0, orbitRadius: 2.55, mineRadius: 0.8, spinSpeed: -3.0 },
+      { id: 'l4_b4', type: 'block', z: 360, y: 2.0, width: 4.8, height: 4.0, shape: 'rect' },
       { id: 'l4_sg2', type: 'speedGate', z: 378, multiplier: 1.0 },
-      // Sector 4: Final gauntlet
+      // Sector 4: Inverted camera finale gauntlet
+      { id: 'l4_wg2', type: 'warpGate', z: 390, warpEffect: 'invertCam', duration: 4.4 },
       { id: 'l4_sp4', type: 'spikes', zStart: 400, zEnd: 432, placement: 'ceiling', height: 1.7 },
       { id: 'l4_saw3', type: 'saw', z: 416, y: 3.2, radius: 1.65, spinSpeed: 4.6 },
       { id: 'l4_g_t', type: 'block', z: 446, y: 10.2, width: 4.4, height: 3.6, shape: 'rect' },
@@ -453,26 +558,28 @@ export const LEVELS: LevelDefinition[] = [
       { id: 'l5_saw2', type: 'saw', z: 58, y: 4.2, radius: 1.7, spinSpeed: -4.8 },
       { id: 'l5_sp1', type: 'spikes', zStart: 78, zEnd: 108, placement: 'floor', height: 1.75 },
       { id: 'l5_b1', type: 'block', z: 93, y: 9.6, width: 5.5, height: 4.0, shape: 'tTop' },
-      { id: 'l5_sm1', type: 'starMine', z: 126, y: 6.0, radius: 1.75, spinSpeed: 4.5 },
-      // Sector 2: T-block tunnel + Overdrive
+      { id: 'l5_pd1', type: 'patrolDrone', z: 124, baseY: 6.0, ampY: 3.2, speed: 2.9, radius: 1.3 },
+      // Sector 2: Mirror flank warp + T-block tunnel + 3-Blade Rotary Turbine
+      { id: 'l5_wg1', type: 'warpGate', z: 150, warpEffect: 'mirrorCam', duration: 4.5 },
       { id: 'l5_sg1', type: 'speedGate', z: 158, multiplier: 1.35 },
       { id: 'l5_b2', type: 'block', z: 186, y: 9.5, width: 5.2, height: 4.4, shape: 'tTop' },
-      { id: 'l5_b3', type: 'block', z: 218, y: 2.5, width: 5.2, height: 4.4, shape: 'tBottom' },
-      { id: 'l5_sm2', type: 'starMine', z: 248, y: 6.2, radius: 1.8, spinSpeed: -5.2 },
-      { id: 'l5_sp2', type: 'spikes', zStart: 262, zEnd: 282, placement: 'ceiling', height: 1.75 },
-      // Sector 3: Dual saws + center split
+      { id: 'l5_b3', type: 'block', z: 214, y: 2.5, width: 5.2, height: 4.4, shape: 'tBottom' },
+      { id: 'l5_rg1', type: 'rotaryGate', z: 244, y: 6.0, armLength: 3.9, blades: 3, spinSpeed: -2.2 },
+      { id: 'l5_sp2', type: 'spikes', zStart: 264, zEnd: 282, placement: 'ceiling', height: 1.75 },
+      // Sector 3: Inverted camera warp + Dual saws + diagonal laser barrier
       { id: 'l5_sg2', type: 'speedGate', z: 295, multiplier: 1.1 },
+      { id: 'l5_wg2', type: 'warpGate', z: 304, warpEffect: 'invertCam', duration: 4.5 },
       { id: 'l5_saw3', type: 'saw', z: 322, y: 8.7, radius: 1.75, spinSpeed: 5.0 },
       { id: 'l5_saw4', type: 'saw', z: 322, y: 3.3, radius: 1.75, spinSpeed: -5.0 },
       { id: 'l5_b4', type: 'block', z: 356, y: 6.0, width: 6.4, height: 3.6, shape: 'rect' },
       { id: 'l5_sp3', type: 'spikes', zStart: 350, zEnd: 364, placement: 'floor', height: 1.4 },
-      { id: 'l5_sm3', type: 'starMine', z: 392, y: 4.0, radius: 1.75, spinSpeed: 4.8 },
-      { id: 'l5_sm4', type: 'starMine', z: 414, y: 8.2, radius: 1.75, spinSpeed: -4.8 },
-      // Sector 4: Final sprint
+      { id: 'l5_lb1', type: 'laserBar', z1: 382, y1: 11.2, z2: 391, y2: 6.6, thickness: 0.25 },
+      { id: 'l5_sm4', type: 'starMine', z: 414, y: 3.8, radius: 1.75, spinSpeed: -4.8 },
+      // Sector 4: Final sprint + Binary Orbit Mine
       { id: 'l5_sg3', type: 'speedGate', z: 448, multiplier: 1.35 },
-      { id: 'l5_g1_t', type: 'block', z: 478, y: 10.1, width: 4.4, height: 3.8, shape: 'rect' },
-      { id: 'l5_g1_b', type: 'block', z: 478, y: 1.9, width: 4.4, height: 3.8, shape: 'rect' },
-      { id: 'l5_saw5', type: 'saw', z: 512, y: 6.0, radius: 1.95, spinSpeed: 5.5 },
+      { id: 'l5_g1_t', type: 'block', z: 476, y: 10.1, width: 4.4, height: 3.8, shape: 'rect' },
+      { id: 'l5_g1_b', type: 'block', z: 476, y: 1.9, width: 4.4, height: 3.8, shape: 'rect' },
+      { id: 'l5_om1', type: 'orbitMine', z: 506, y: 6.0, orbitRadius: 2.65, mineRadius: 0.84, spinSpeed: 3.2 },
       { id: 'l5_sp4', type: 'spikes', zStart: 530, zEnd: 554, placement: 'floor', height: 1.75 },
       { id: 'l5_sp5', type: 'spikes', zStart: 530, zEnd: 554, placement: 'ceiling', height: 1.75 },
     ],
@@ -522,8 +629,8 @@ export function generateEndlessChunk(
 ): { obstacles: LevelObstacle[]; collectibles: CollectibleItem[] } {
   const obstacles: LevelObstacle[] = [];
   const collectibles: CollectibleItem[] = [];
-  const pattern = chunkIndex % 5;
-  const spinBase = 3.8 + Math.min(2.5, chunkIndex * 0.12);
+  const pattern = chunkIndex % 8;
+  const spinBase = 3.6 + Math.min(2.6, chunkIndex * 0.12);
 
   if (pattern === 0) {
     // T-Block Slalom + Gold Zigzag
@@ -538,22 +645,30 @@ export function generateEndlessChunk(
       ...goldDiamond(zStart + 76, 9.4, 1.5, 1.1, 140)
     );
   } else if (pattern === 1) {
-    // Star Mine Alternating Corridor + Floor Spikes
+    // Diagonal Laser Chute + Patrol Drone
     obstacles.push(
-      { id: nextId('esm'), type: 'starMine', z: zStart + 20, y: 4.3, radius: 1.65, spinSpeed: spinBase },
-      { id: nextId('esm'), type: 'starMine', z: zStart + 44, y: 8.1, radius: 1.65, spinSpeed: -spinBase },
-      { id: nextId('esp'), type: 'spikes', zStart: zStart + 60, zEnd: zStart + 82, placement: 'floor', height: 1.6 }
+      { id: nextId('elb'), type: 'laserBar', z1: zStart + 16, y1: 11.2, z2: zStart + 24, y2: 6.8, thickness: 0.24 },
+      { id: nextId('elb'), type: 'laserBar', z1: zStart + 36, y1: 0.8, z2: zStart + 44, y2: 5.2, thickness: 0.24 },
+      { id: nextId('epd'), type: 'patrolDrone', z: zStart + 68, baseY: 6.0, ampY: 3.1, speed: 2.3 + Math.min(1.4, chunkIndex * 0.08), phase: chunkIndex * 0.7, radius: 1.25 }
     );
     collectibles.push(
-      ...goldLine(zStart + 14, 8.2, zStart + 28, 8.2, 4, 120),
-      ...goldLine(zStart + 38, 3.8, zStart + 52, 3.8, 4, 120),
-      ...goldTriangle(zStart + 71, 6.2, true, 130)
+      ...goldLine(zStart + 14, 3.8, zStart + 26, 3.8, 4, 130),
+      ...goldLine(zStart + 34, 8.2, zStart + 46, 8.2, 4, 130),
+      ...goldDiamond(zStart + 68, 6.0, 1.6, 1.2, 150)
     );
   } else if (pattern === 2) {
-    // Gate Thread + Center Split + Ceiling Spikes
+    // Spatial Warp Gate + Gate Thread + Center Split + Ceiling Spikes
+    const warpEffects: Array<'shiftLeft' | 'invertCam' | 'shiftRight' | 'mirrorCam'> = [
+      'shiftLeft',
+      'invertCam',
+      'shiftRight',
+      'mirrorCam',
+    ];
+    const warpEffect = warpEffects[Math.floor(chunkIndex / 8) % warpEffects.length];
     obstacles.push(
-      { id: nextId('eb'), type: 'block', z: zStart + 24, y: 10.2, width: 4.2, height: 3.6, shape: 'rect' },
-      { id: nextId('eb'), type: 'block', z: zStart + 24, y: 1.8, width: 4.2, height: 3.6, shape: 'rect' },
+      { id: nextId('ewg'), type: 'warpGate', z: zStart + 8, warpEffect, duration: 4.2 },
+      { id: nextId('eb'), type: 'block', z: zStart + 26, y: 10.2, width: 4.2, height: 3.6, shape: 'rect' },
+      { id: nextId('eb'), type: 'block', z: zStart + 26, y: 1.8, width: 4.2, height: 3.6, shape: 'rect' },
       { id: nextId('esp'), type: 'spikes', zStart: zStart + 44, zEnd: zStart + 66, placement: 'ceiling', height: 1.65 },
       { id: nextId('esaw'), type: 'saw', z: zStart + 55, y: 3.4, radius: 1.55, spinSpeed: -spinBase },
       { id: nextId('eb'), type: 'block', z: zStart + 80, y: 6.0, width: 5.0, height: 3.4, shape: 'rect' }
@@ -564,31 +679,74 @@ export function generateEndlessChunk(
       ...goldDiamond(zStart + 80, 9.5, 1.4, 1.0, 150)
     );
   } else if (pattern === 3) {
-    // Speed Boost Surge + Twin Saws
+    // Rotary Turbine + Gold Triangle + Star Mine
+    const blades: 2 | 3 | 4 = chunkIndex >= 14 ? 4 : chunkIndex >= 6 ? 3 : 2;
+    obstacles.push(
+      { id: nextId('erg'), type: 'rotaryGate', z: zStart + 28, y: 6.0, armLength: 3.9, blades, spinSpeed: (chunkIndex % 2 === 0 ? 1 : -1) * (2.0 + Math.min(1.4, chunkIndex * 0.06)) },
+      { id: nextId('esm'), type: 'starMine', z: zStart + 58, y: 4.2, radius: 1.65, spinSpeed: spinBase },
+      { id: nextId('esp'), type: 'spikes', zStart: zStart + 68, zEnd: zStart + 84, placement: 'floor', height: 1.6 }
+    );
+    collectibles.push(
+      ...goldTriangle(zStart + 44, 6.0, true, 140),
+      ...goldLine(zStart + 68, 7.6, zStart + 84, 7.6, 4, 140)
+    );
+  } else if (pattern === 4) {
+    // Speed Boost Surge + Twin Saws + Patrol Drone
     const boost = 1.15 + Math.min(0.25, chunkIndex * 0.02);
     obstacles.push(
       { id: nextId('esg'), type: 'speedGate', z: zStart + 12, multiplier: boost },
       { id: nextId('esaw'), type: 'saw', z: zStart + 38, y: 8.6, radius: 1.7, spinSpeed: spinBase },
       { id: nextId('esaw'), type: 'saw', z: zStart + 38, y: 3.4, radius: 1.7, spinSpeed: -spinBase },
-      { id: nextId('esm'), type: 'starMine', z: zStart + 68, y: 6.0, radius: 1.75, spinSpeed: spinBase }
+      { id: nextId('epd'), type: 'patrolDrone', z: zStart + 68, baseY: 6.0, ampY: 3.2, speed: 2.7, radius: 1.3 }
     );
     collectibles.push(
       ...goldLine(zStart + 26, 6.0, zStart + 50, 6.0, 5, 140),
       ...goldTriangle(zStart + 68, 9.2, false, 150)
     );
-  } else {
-    // Dual Spikes Tunnel + Staggered Saws + Normalizer
+  } else if (pattern === 5) {
+    // Binary Orbit Mine Gauntlet + Diagonal Laser Bar
     obstacles.push(
-      { id: nextId('esp'), type: 'spikes', zStart: zStart + 16, zEnd: zStart + 42, placement: 'floor', height: 1.65 },
-      { id: nextId('esp'), type: 'spikes', zStart: zStart + 16, zEnd: zStart + 42, placement: 'ceiling', height: 1.65 },
-      { id: nextId('esaw'), type: 'saw', z: zStart + 60, y: 7.8, radius: 1.6, spinSpeed: spinBase },
-      { id: nextId('eb'), type: 'block', z: zStart + 80, y: 2.2, width: 4.5, height: 4.2, shape: 'rect' },
-      { id: nextId('esg'), type: 'speedGate', z: zStart + 88, multiplier: 1.0 + Math.min(0.2, chunkIndex * 0.015) }
+      { id: nextId('eom'), type: 'orbitMine', z: zStart + 28, y: 6.0, orbitRadius: 2.55, mineRadius: 0.82, spinSpeed: 2.6 + Math.min(1.8, chunkIndex * 0.07) },
+      { id: nextId('elb'), type: 'laserBar', z1: zStart + 52, y1: 11.2, z2: zStart + 62, y2: 6.4, thickness: 0.25 },
+      { id: nextId('esm'), type: 'starMine', z: zStart + 76, y: 3.8, radius: 1.65, spinSpeed: -spinBase }
     );
     collectibles.push(
-      ...goldDiamond(zStart + 29, 6.0, 2.0, 1.5, 150),
-      ...goldLine(zStart + 52, 3.8, zStart + 68, 3.8, 4, 140),
-      ...goldLine(zStart + 72, 7.6, zStart + 86, 7.6, 4, 140)
+      ...goldLine(zStart + 18, 6.0, zStart + 38, 6.0, 5, 150),
+      ...goldLine(zStart + 50, 3.6, zStart + 64, 3.6, 4, 140),
+      ...goldDiamond(zStart + 76, 8.6, 1.4, 1.0, 150)
+    );
+  } else if (pattern === 6) {
+    // Secondary Warp Gate + Star Mine Alternating Corridor + Floor Spikes + Laser Bar
+    const warpEffects: Array<'mirrorCam' | 'shiftRight' | 'invertCam' | 'shiftLeft'> = [
+      'mirrorCam',
+      'shiftRight',
+      'invertCam',
+      'shiftLeft',
+    ];
+    const warpEffect = warpEffects[Math.floor(chunkIndex / 8) % warpEffects.length];
+    obstacles.push(
+      { id: nextId('ewg'), type: 'warpGate', z: zStart + 8, warpEffect, duration: 4.2 },
+      { id: nextId('esm'), type: 'starMine', z: zStart + 24, y: 4.3, radius: 1.65, spinSpeed: spinBase },
+      { id: nextId('esm'), type: 'starMine', z: zStart + 46, y: 8.1, radius: 1.65, spinSpeed: -spinBase },
+      { id: nextId('esp'), type: 'spikes', zStart: zStart + 60, zEnd: zStart + 82, placement: 'floor', height: 1.6 },
+      { id: nextId('elb'), type: 'laserBar', z1: zStart + 66, y1: 11.2, z2: zStart + 74, y2: 7.4, thickness: 0.24 }
+    );
+    collectibles.push(
+      ...goldLine(zStart + 14, 8.2, zStart + 28, 8.2, 4, 130),
+      ...goldLine(zStart + 38, 3.8, zStart + 52, 3.8, 4, 130),
+      ...goldLine(zStart + 62, 4.8, zStart + 80, 4.8, 4, 150)
+    );
+  } else {
+    // Dual Spikes Tunnel + Orbit Mine + Normalizer
+    obstacles.push(
+      { id: nextId('esp'), type: 'spikes', zStart: zStart + 16, zEnd: zStart + 40, placement: 'floor', height: 1.65 },
+      { id: nextId('esp'), type: 'spikes', zStart: zStart + 16, zEnd: zStart + 40, placement: 'ceiling', height: 1.65 },
+      { id: nextId('eom'), type: 'orbitMine', z: zStart + 62, y: 6.0, orbitRadius: 2.5, mineRadius: 0.8, spinSpeed: -2.8 },
+      { id: nextId('esg'), type: 'speedGate', z: zStart + 84, multiplier: 1.0 + Math.min(0.2, chunkIndex * 0.015) }
+    );
+    collectibles.push(
+      ...goldDiamond(zStart + 28, 6.0, 2.0, 1.5, 160),
+      ...goldLine(zStart + 52, 6.0, zStart + 74, 6.0, 5, 150)
     );
   }
 

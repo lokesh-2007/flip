@@ -114,7 +114,7 @@ export const LevelCompleteModal: React.FC<LevelCompleteModalProps> = ({
             <span className="text-slate-300 font-medium">
               {nextLockedSkin
                 ? `Next Avatar Unlock: ${nextLockedSkin.name}`
-                : 'All 6 Avatars Unlocked'}
+                : `All ${CRAFT_SKINS.length} Avatars Unlocked`}
             </span>
             <span className="font-mono-num text-cyan-300 font-semibold">
               {bonusPct}%

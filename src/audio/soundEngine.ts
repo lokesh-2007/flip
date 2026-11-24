@@ -1,4 +1,4 @@
-import { SpecialPowerType } from '../types/game';
+import { EnvEventType, SpecialPowerType, WarpEffectType } from '../types/game';
 
 const MUTE_STORAGE_KEY = 'cyber_trench_muted_v1';
 
@@ -312,6 +312,58 @@ class SoundEngine {
     osc.stop(now + 0.22);
   }
 
+  public playWarpGate(effect: WarpEffectType): void {
+    this.intensityEnvelope = 1.0;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc1.type = 'sawtooth';
+    osc2.type = 'triangle';
+
+    if (effect === 'invertCam') {
+      osc1.frequency.setValueAtTime(760, now);
+      osc1.frequency.exponentialRampToValueAtTime(190, now + 0.34);
+      osc2.frequency.setValueAtTime(380, now);
+      osc2.frequency.exponentialRampToValueAtTime(920, now + 0.34);
+    } else if (effect === 'mirrorCam') {
+      osc1.frequency.setValueAtTime(320, now);
+      osc1.frequency.exponentialRampToValueAtTime(840, now + 0.16);
+      osc1.frequency.exponentialRampToValueAtTime(420, now + 0.32);
+      osc2.frequency.setValueAtTime(640, now);
+      osc2.frequency.exponentialRampToValueAtTime(310, now + 0.32);
+    } else {
+      const startF = effect === 'shiftLeft' ? 540 : 340;
+      const endF = effect === 'shiftLeft' ? 280 : 680;
+      osc1.frequency.setValueAtTime(startF, now);
+      osc1.frequency.exponentialRampToValueAtTime(endF, now + 0.26);
+      osc2.frequency.setValueAtTime(startF * 1.5, now);
+      osc2.frequency.exponentialRampToValueAtTime(endF * 1.5, now + 0.26);
+    }
+
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1150, now);
+    filter.Q.setValueAtTime(1.8, now);
+
+    gain.gain.setValueAtTime(0.14, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + 0.36);
+    osc2.stop(now + 0.36);
+  }
+
   public playSpecialPower(powerType: SpecialPowerType): void {
     this.intensityEnvelope = 1.0;
     const ctx = this.ensureContext();
@@ -322,13 +374,20 @@ class SoundEngine {
     const osc2 = ctx.createOscillator();
     const gain = ctx.createGain();
 
-    if (powerType === 'slowmo') {
+    if (powerType === 'slowmo' || powerType === 'stasis') {
       osc.type = 'sine';
       osc.frequency.setValueAtTime(740, now);
       osc.frequency.exponentialRampToValueAtTime(210, now + 0.28);
       osc2.type = 'triangle';
       osc2.frequency.setValueAtTime(370, now);
       osc2.frequency.exponentialRampToValueAtTime(105, now + 0.28);
+    } else if (powerType === 'aegis' || powerType === 'deflect' || powerType === 'revive') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(powerType === 'revive' ? 440 : 320, now);
+      osc.frequency.exponentialRampToValueAtTime(powerType === 'revive' ? 1180 : 880, now + 0.26);
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(powerType === 'revive' ? 660 : 480, now);
+      osc2.frequency.exponentialRampToValueAtTime(1320, now + 0.26);
     } else if (powerType === 'breaker' || powerType === 'pulse') {
       osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(280, now);
@@ -343,6 +402,20 @@ class SoundEngine {
       osc2.type = 'triangle';
       osc2.frequency.setValueAtTime(480, now);
       osc2.frequency.exponentialRampToValueAtTime(1120, now + 0.26);
+    } else if (powerType === 'barrage') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.exponentialRampToValueAtTime(1040, now + 0.24);
+      osc2.type = 'square';
+      osc2.frequency.setValueAtTime(330, now);
+      osc2.frequency.exponentialRampToValueAtTime(660, now + 0.24);
+    } else if (powerType === 'smash') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(190, now);
+      osc.frequency.exponentialRampToValueAtTime(52, now + 0.3);
+      osc2.type = 'square';
+      osc2.frequency.setValueAtTime(380, now);
+      osc2.frequency.exponentialRampToValueAtTime(110, now + 0.28);
     } else {
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(360, now);
@@ -364,6 +437,44 @@ class SoundEngine {
     osc2.stop(now + 0.32);
   }
 
+  public playBarrageShot(): void {
+    this.intensityEnvelope = Math.min(1, this.intensityEnvelope + 0.14);
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(640, now);
+    osc.frequency.exponentialRampToValueAtTime(220, now + 0.085);
+    gain.gain.setValueAtTime(0.075, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.095);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.1);
+  }
+
+  public playSmashImpact(): void {
+    this.intensityEnvelope = Math.min(1, this.intensityEnvelope + 0.28);
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(210, now);
+    osc.frequency.exponentialRampToValueAtTime(48, now + 0.16);
+    gain.gain.setValueAtTime(0.14, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.19);
+  }
+
   public playShieldPop(): void {
     this.intensityEnvelope = 0.95;
     const ctx = this.ensureContext();
@@ -381,6 +492,100 @@ class SoundEngine {
     gain.connect(ctx.destination);
     osc.start(now);
     osc.stop(now + 0.26);
+  }
+
+  public playEnvWarning(type: EnvEventType): void {
+    this.intensityEnvelope = Math.min(1, this.intensityEnvelope + 0.35);
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const baseFreq = type === 'solarFlare' ? 660 : type === 'gravityShift' ? 520 : 460;
+    for (let i = 0; i < 2; i++) {
+      const start = now + i * 0.11;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(baseFreq * (i === 1 ? 1.25 : 1), start);
+      gain.gain.setValueAtTime(0.085, start);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.09);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 0.1);
+    }
+  }
+
+  public playEnvEventStart(type: EnvEventType): void {
+    this.intensityEnvelope = 1.0;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    if (type === 'glitchStorm') {
+      const freqs = [780, 310, 960, 240];
+      freqs.forEach((f, idx) => {
+        const t = now + idx * 0.045;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(f, t);
+        gain.gain.setValueAtTime(0.065, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.055);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.06);
+      });
+    } else if (type === 'gravityShift') {
+      const osc = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(640, now);
+      osc.frequency.exponentialRampToValueAtTime(165, now + 0.34);
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(220, now);
+      osc2.frequency.exponentialRampToValueAtTime(520, now + 0.34);
+      gain.gain.setValueAtTime(0.11, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
+      osc.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc2.start(now);
+      osc.stop(now + 0.38);
+      osc2.stop(now + 0.38);
+    } else if (type === 'solarFlare') {
+      [440, 554.37, 659.25].forEach((f, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(f, now + idx * 0.03);
+        gain.gain.setValueAtTime(0.09, now + idx * 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + idx * 0.03);
+        osc.stop(now + 0.34);
+      });
+    } else {
+      const noise = ctx.createBufferSource();
+      noise.buffer = this.getNoiseBuffer(ctx);
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(420, now);
+      filter.frequency.exponentialRampToValueAtTime(1400, now + 0.28);
+      filter.Q.setValueAtTime(2.4, now);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      noise.start(now);
+      noise.stop(now + 0.32);
+    }
   }
 
   public playCrash(): void {

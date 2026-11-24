@@ -17,26 +17,38 @@ import {
 } from '../levels/levelData';
 import {
   CameraMode,
+  ChallengeEvent,
   CheckpointMarker,
   CollectibleItem,
   CraftSkin,
+  EnvEventPhase,
+  EnvEventType,
   GameMode,
   GamePhase,
   HudSnapshot,
   LevelDefinition,
   LevelObstacle,
+  UpgradeLevels,
+  WarpEffectType,
 } from '../types/game';
+import { DEFAULT_UPGRADES } from '../utils/advancements';
 import {
   createBlockObstacle,
   createCheckpointMarker,
   createFinishPortal,
   createGoldCube,
+  createLaserBar,
+  createOrbitMine,
+  createPatrolDrone,
   createPlayerCraft,
+  createRotaryGate,
   createSawBlade,
   createSpeedGate,
   createSpikeCluster,
   createStarCollectible,
   createStarMine,
+  createWarpGate,
+  disposeSharedModelCache,
   getBlockSubBoxes,
   PlayerCraftHandles,
 } from './models';
@@ -64,10 +76,36 @@ const NEAR_MISS_MARGIN = 0.36;
 const PICKUP_RADIUS = 0.95;
 const MAX_TRAIL_POINTS = 320;
 const PARTICLE_POOL_SIZE = 112;
+const BARRAGE_POOL_SIZE = 14;
 const ENDLESS_SLAB_LEN = 264;
 const SECTOR_DISTANCE = 250;
 
+function distSqToSegment2D(
+  pz: number,
+  py: number,
+  az: number,
+  ay: number,
+  bz: number,
+  by: number
+): number {
+  const dz = bz - az;
+  const dy = by - ay;
+  const lenSq = dz * dz + dy * dy;
+  if (lenSq <= 1e-6) {
+    const ez = pz - az;
+    const ey = py - ay;
+    return ez * ez + ey * ey;
+  }
+  const t = THREE.MathUtils.clamp(((pz - az) * dz + (py - ay) * dy) / lenSq, 0, 1);
+  const cz = az + t * dz;
+  const cy = ay + t * dy;
+  const rz = pz - cz;
+  const ry = py - cy;
+  return rz * rz + ry * ry;
+}
+
 interface TrailVertex {
+  x: number;
   z: number;
   y: number;
 }
@@ -86,9 +124,22 @@ interface ParticleState {
   colorHex: number;
 }
 
+interface BarrageProjectile {
+  active: boolean;
+  x: number;
+  z: number;
+  y: number;
+  vx: number;
+  vz: number;
+  vy: number;
+  life: number;
+}
+
 interface RuntimeObstacle {
   data: LevelObstacle;
   group: THREE.Group;
+  animatedSubgroup?: THREE.Group;
+  warpMembraneMat?: THREE.MeshBasicMaterial;
   subBoxes?: Array<{ zMin: number; zMax: number; yMin: number; yMax: number }>;
   triggered?: boolean;
   destroyed?: boolean;
@@ -112,6 +163,7 @@ interface RuntimeCheckpoint {
 export interface EngineCallbacks {
   onHudUpdate: (snapshot: HudSnapshot) => void;
   onLevelComplete: (snapshot: HudSnapshot) => void;
+  onChallengeEvent?: (event: ChallengeEvent) => void;
 }
 
 function detectSoftwareWebGL(): boolean {
@@ -178,9 +230,12 @@ export class ZigzagEngine {
   private trailLinePositions: Float32Array;
   private trailVertices: TrailVertex[] = [];
 
-  // Particle pool
+  // Particle & plasma barrage pools
   private particleMesh: THREE.InstancedMesh;
   private particles: ParticleState[] = [];
+  private barrageMesh: THREE.InstancedMesh;
+  private barrageProjectiles: BarrageProjectile[] = [];
+  private barrageCooldown: number = 0;
 
   // Level runtime objects
   private currentLevel!: LevelDefinition;
@@ -200,6 +255,7 @@ export class ZigzagEngine {
   private endlessSpanZ: number = 288;
   private nextSectorZ: number = SECTOR_DISTANCE;
   private currentSector: number = 1;
+  private lastReportedInfinityDist: number = 0;
   private towerInstances: Array<{ x: number; y: number; z: number; w: number; h: number }> = [];
   private floaterInstances: Array<{ x: number; y: number; z: number; s: number; rx: number; ry: number }> = [];
 
@@ -207,11 +263,22 @@ export class ZigzagEngine {
   private phase: GamePhase = 'ready';
   private cameraMode: CameraMode = 'isometric';
   private isHolding: boolean = false;
+  private playerX: number = 0;
+  private lastTrailSampleX: number = 0;
   private playerZ: number = 0;
   private playerY: number = 6.0;
   private craftPitch: number = 0;
   private railState: 'free' | 'floor' | 'ceiling' = 'free';
   private activeSpeedMultiplier: number = 1.0;
+
+  // Spatial Warp Gate state
+  private xShiftTimer: number = 0;
+  private xShiftTarget: number = 0;
+  private invertCamTimer: number = 0;
+  private mirrorCamTimer: number = 0;
+  private activeWarpEffect: WarpEffectType | null = null;
+  private camRollAngle: number = 0;
+  private camMirrorBlend: number = 0;
   private lastCheckpoint: CheckpointMarker | null = null;
   private score: number = 0;
   private starsEarned: [boolean, boolean, boolean] = [false, false, false];
@@ -223,16 +290,35 @@ export class ZigzagEngine {
   private calloutTimer: number = 0;
   private attempts: number = 1;
   private crashTimer: number = 0;
-  private shakeIntensity: number = 0;
+  private cameraTrauma: number = 0;
+  private traumaDecayRate: number = 1.65;
+  private proximityShake: number = 0;
+  private camBasePos = new THREE.Vector3();
+  private camShakeOffset = new THREE.Vector3();
+  private camImpulseOffset = new THREE.Vector3();
+  private camImpulseVel = new THREE.Vector3();
+  private reducedMotionQuery: MediaQueryList | null = null;
+  private prefersReducedMotion: boolean = false;
   private totalElapsed: number = 0;
   private lastHudEmit: number = 0;
 
-  // Special Power state
+  // Special Power & Upgrades state
+  private upgradeLevels: UpgradeLevels = { ...DEFAULT_UPGRADES };
   private powerCharge: number = 100;
   private powerActiveRemaining: number = 0;
   private shieldActive: boolean = false;
+  private shieldCharges: number = 0;
   private invulnTimer: number = 0;
+  private deflectPulseCooldown: number = 0;
   private currentMusicIntensity: number = 0.15;
+
+  // Environmental Events state
+  private envEventType: EnvEventType | null = null;
+  private envEventPhase: EnvEventPhase = 'idle';
+  private envEventTimer: number = 0;
+  private nextEnvEventCooldown: number = 13.0;
+  private envParticleTimer: number = 0;
+  private envBodyFlipAngle: number = 0;
 
   // Loop & lifecycle
   private frameId: number = 0;
@@ -410,6 +496,36 @@ export class ZigzagEngine {
     }
     this.particleMesh.instanceMatrix.needsUpdate = true;
 
+    // Plasma Barrage projectile InstancedMesh pool
+    const bGeo = new THREE.CapsuleGeometry(0.14, 0.56, 4, 8);
+    bGeo.rotateX(Math.PI / 2);
+    const bMat = new THREE.MeshBasicMaterial({
+      color: 0xfb923c,
+      transparent: true,
+      opacity: 0.96,
+    });
+    this.barrageMesh = new THREE.InstancedMesh(bGeo, bMat, BARRAGE_POOL_SIZE);
+    this.barrageMesh.frustumCulled = false;
+    this.scene.add(this.barrageMesh);
+
+    for (let i = 0; i < BARRAGE_POOL_SIZE; i++) {
+      this.barrageProjectiles.push({
+        active: false,
+        x: 0,
+        z: 0,
+        y: -100,
+        vx: 0,
+        vz: 0,
+        vy: 0,
+        life: 0,
+      });
+      _dummy.position.set(0, -100, 0);
+      _dummy.scale.setScalar(0);
+      _dummy.updateMatrix();
+      this.barrageMesh.setMatrixAt(i, _dummy.matrix);
+    }
+    this.barrageMesh.instanceMatrix.needsUpdate = true;
+
     // Load initial level
     this.loadLevel(initialLevel, initialMode);
 
@@ -417,13 +533,30 @@ export class ZigzagEngine {
       this.renderer.compile(this.scene, this.camera);
     }
 
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      this.reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+      this.prefersReducedMotion = this.reducedMotionQuery.matches;
+      this.reducedMotionQuery.addEventListener('change', this.handleReducedMotionChange);
+    }
+
     window.addEventListener('resize', this.handleResize);
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
     this.renderer.domElement.addEventListener('webglcontextlost', this.handleContextLost);
     this.renderer.domElement.addEventListener('webglcontextrestored', this.handleContextRestored);
 
     this.lastTimeMs = performance.now();
     this.scheduleNextFrame();
   }
+
+  private handleReducedMotionChange = (e: MediaQueryListEvent): void => {
+    this.prefersReducedMotion = e.matches;
+  };
+
+  private handleVisibilityChange = (): void => {
+    if (!document.hidden) {
+      this.lastTimeMs = performance.now();
+    }
+  };
 
   private handleResize = (): void => {
     if (this.disposed) return;
@@ -473,11 +606,16 @@ export class ZigzagEngine {
     return this.bloomEnabled;
   }
 
+  public setUpgrades(upgrades: UpgradeLevels): void {
+    this.upgradeLevels = { ...upgrades };
+  }
+
   public setSkin(skin: CraftSkin): void {
     this.currentSkin = skin;
     this.craft.setSkin(skin);
     this.powerActiveRemaining = 0;
     this.shieldActive = false;
+    this.shieldCharges = 0;
     this.craft.shieldMesh.visible = false;
     this.craft.auraRing.visible = false;
     this.craft.laserBeam.visible = false;
@@ -507,16 +645,36 @@ export class ZigzagEngine {
     if (this.paused || this.phase !== 'playing') return false;
     if (this.powerCharge < 100 || this.powerActiveRemaining > 0) return false;
 
+    const pType = this.currentSkin.powerType;
+    const isDefensive =
+      pType === 'shield' ||
+      pType === 'phase' ||
+      pType === 'aegis' ||
+      pType === 'stasis' ||
+      pType === 'deflect' ||
+      pType === 'revive' ||
+      pType === 'slowmo';
+
     this.powerCharge = 0;
-    this.powerActiveRemaining = this.currentSkin.powerDuration;
-    this.shieldActive = this.currentSkin.powerType === 'shield';
+    this.powerActiveRemaining =
+      this.currentSkin.powerDuration + (isDefensive ? this.upgradeLevels.plating * 0.7 : 0);
 
-    soundEngine.playSpecialPower(this.currentSkin.powerType);
-    this.spawnBurst(0, this.playerY, this.playerZ, 18, this.currentSkin.coreColor, 10);
-    this.shakeIntensity = Math.max(this.shakeIntensity, 0.22);
+    this.shieldCharges =
+      pType === 'aegis'
+        ? 2
+        : pType === 'shield' || pType === 'stasis' || pType === 'deflect' || pType === 'revive'
+          ? 1
+          : 0;
+    this.shieldActive = this.shieldCharges > 0;
+    this.deflectPulseCooldown = 0;
+
+    soundEngine.playSpecialPower(pType);
+    this.spawnBurst(this.playerX, this.playerY, this.playerZ, 18, this.currentSkin.coreColor, 10);
+    this.triggerCameraShake(0.28, 0, -0.18);
     this.pushCallout(`${this.currentSkin.powerName} Activated`);
+    this.callbacks.onChallengeEvent?.({ powersActivated: 1 });
 
-    if (this.currentSkin.powerType === 'pulse') {
+    if (pType === 'pulse') {
       this.triggerEmpBlast(8.8, 100);
     }
 
@@ -524,29 +682,74 @@ export class ZigzagEngine {
     return true;
   }
 
+  private addScore(amount: number): void {
+    if (amount <= 0) return;
+    this.score += amount;
+    this.callbacks.onChallengeEvent?.({ goldEarned: amount });
+  }
+
+  private getObstacleCenter(obs: RuntimeObstacle): { z: number; y: number } {
+    const d = obs.data;
+    if (d.type === 'laserBar') {
+      return { z: (d.z1 + d.z2) * 0.5, y: (d.y1 + d.y2) * 0.5 };
+    }
+    if (d.type === 'patrolDrone') {
+      const curY = obs.animatedSubgroup ? obs.animatedSubgroup.position.y : d.baseY;
+      return { z: d.z, y: curY };
+    }
+    if (d.type === 'spikes') {
+      return {
+        z: (d.zStart + d.zEnd) * 0.5,
+        y: d.placement === 'floor' ? d.height * 0.5 : TRACK_CEILING_Y - d.height * 0.5,
+      };
+    }
+    if (d.type === 'speedGate' || d.type === 'warpGate') {
+      return { z: d.z, y: 6.0 };
+    }
+    return { z: d.z, y: d.y };
+  }
+
+  private isDestructibleObstacle(obs: RuntimeObstacle, includeSpikes: boolean): boolean {
+    const t = obs.data.type;
+    if (t === 'speedGate' || t === 'warpGate') return false;
+    if (t === 'spikes') return includeSpikes;
+    return true;
+  }
+
   private triggerEmpBlast(radius: number, bonusPerTarget: number): void {
     const rSq = radius * radius;
     let hitCount = 0;
     for (const obs of this.runtimeObstacles) {
-      if (obs.destroyed) continue;
-      const d = obs.data;
-      if (d.type === 'saw' || d.type === 'starMine' || d.type === 'block') {
-        const dz = d.z - this.playerZ;
-        const dy = d.y - this.playerY;
-        if (dz * dz + dy * dy <= rSq) {
-          obs.destroyed = true;
-          obs.group.visible = false;
-          hitCount += 1;
-          this.score += bonusPerTarget;
-          this.spawnBurst(0, d.y, d.z, 18, this.currentSkin.coreColor, 10);
-        }
+      if (obs.destroyed || !this.isDestructibleObstacle(obs, false)) continue;
+      const center = this.getObstacleCenter(obs);
+      const dz = center.z - this.playerZ;
+      const dy = center.y - this.playerY;
+      if (dz * dz + dy * dy <= rSq) {
+        obs.destroyed = true;
+        obs.group.visible = false;
+        hitCount += 1;
+        this.addScore(bonusPerTarget);
+        this.spawnBurst(0, center.y, center.z, 18, this.currentSkin.coreColor, 10);
       }
     }
     if (hitCount > 0) {
-      this.shakeIntensity = Math.max(this.shakeIntensity, 0.36);
+      this.callbacks.onChallengeEvent?.({ hazardsShattered: hitCount });
+      this.triggerCameraShake(Math.min(0.75, 0.28 + hitCount * 0.1), 0, -0.25);
       soundEngine.playCollectGold(5);
       this.pushCallout(`EMP Shattered x${hitCount} (+${hitCount * bonusPerTarget})`);
     }
+  }
+
+  private resetBarrageProjectiles(): void {
+    this.barrageCooldown = 0;
+    for (let i = 0; i < BARRAGE_POOL_SIZE; i++) {
+      this.barrageProjectiles[i].active = false;
+      _dummy.position.set(0, -100, 0);
+      _dummy.scale.setScalar(0);
+      _dummy.updateMatrix();
+      this.barrageMesh.setMatrixAt(i, _dummy.matrix);
+    }
+    this.barrageMesh.instanceMatrix.needsUpdate = true;
   }
 
   public setHolding(holding: boolean): void {
@@ -557,7 +760,8 @@ export class ZigzagEngine {
         this.phase = 'playing';
         this.isHolding = true;
         this.railState = 'free';
-        this.trailVertices = [{ z: this.playerZ, y: this.playerY }];
+        this.trailVertices = [{ x: this.playerX, z: this.playerZ, y: this.playerY }];
+        this.lastTrailSampleX = this.playerX;
         soundEngine.playTurn(this.gameMode !== 'inverted');
         this.emitHud(true);
       }
@@ -575,7 +779,8 @@ export class ZigzagEngine {
         this.phase = 'playing';
         this.isHolding = true;
         this.railState = 'free';
-        this.trailVertices = [{ z: this.playerZ, y: this.playerY }];
+        this.trailVertices = [{ x: this.playerX, z: this.playerZ, y: this.playerY }];
+        this.lastTrailSampleX = this.playerX;
         soundEngine.playTurn(this.gameMode !== 'inverted');
         this.emitHud(true);
       }
@@ -586,7 +791,8 @@ export class ZigzagEngine {
 
     if (this.isHolding !== holding) {
       this.isHolding = holding;
-      this.trailVertices.push({ z: this.playerZ, y: this.playerY });
+      this.trailVertices.push({ x: this.playerX, z: this.playerZ, y: this.playerY });
+      this.lastTrailSampleX = this.playerX;
       if (this.trailVertices.length > MAX_TRAIL_POINTS - 2) {
         this.trailVertices.shift();
       }
@@ -636,30 +842,49 @@ export class ZigzagEngine {
     const startZ = !fullReset && this.lastCheckpoint ? this.lastCheckpoint.z : 0;
     const startY = !fullReset && this.lastCheckpoint ? this.lastCheckpoint.safeY : 6.0;
 
+    this.playerX = 0;
+    this.lastTrailSampleX = 0;
     this.playerZ = startZ;
     this.playerY = startY;
     this.craftPitch = 0;
     this.isHolding = false;
     this.railState = 'free';
     this.phase = 'ready';
-    this.shakeIntensity = 0;
+    this.resetCameraShake();
     this.crashTimer = 0;
+
+    this.xShiftTimer = 0;
+    this.xShiftTarget = 0;
+    this.invertCamTimer = 0;
+    this.mirrorCamTimer = 0;
+    this.activeWarpEffect = null;
+    this.camRollAngle = 0;
+    this.camMirrorBlend = 0;
 
     this.powerCharge = 100;
     this.powerActiveRemaining = 0;
     this.shieldActive = false;
+    this.shieldCharges = 0;
     this.invulnTimer = 0;
+    this.deflectPulseCooldown = 0;
+    this.envEventType = null;
+    this.envEventPhase = 'idle';
+    this.envEventTimer = 0;
+    this.nextEnvEventCooldown = 11.5 + Math.random() * 5.0;
+    this.envBodyFlipAngle = 0;
+    this.craft.bodyGroup.rotation.z = 0;
     this.craft.shieldMesh.visible = false;
     this.craft.auraRing.visible = false;
     this.craft.laserBeam.visible = false;
+    this.resetBarrageProjectiles();
 
     let mult = 1.0;
     for (const obs of this.runtimeObstacles) {
       if (obs.data.type === 'speedGate' && obs.data.z <= startZ) {
         mult = obs.data.multiplier;
         obs.triggered = true;
-      } else if (obs.data.type === 'speedGate') {
-        obs.triggered = false;
+      } else if (obs.data.type === 'speedGate' || obs.data.type === 'warpGate') {
+        obs.triggered = obs.data.type === 'warpGate' && obs.data.z <= startZ;
       }
     }
     this.activeSpeedMultiplier = mult;
@@ -668,7 +893,7 @@ export class ZigzagEngine {
     this.craft.group.position.set(0, this.playerY, this.playerZ);
     this.craft.group.rotation.set(0, 0, 0);
 
-    this.trailVertices = [{ z: this.playerZ, y: this.playerY }];
+    this.trailVertices = [{ x: 0, z: this.playerZ, y: this.playerY }];
     this.updateTrailGeometry();
     this.snapCameraToPlayer();
     this.emitHud(true);
@@ -845,6 +1070,7 @@ export class ZigzagEngine {
       this.attempts = 1;
     }
     this.score = 0;
+    this.lastReportedInfinityDist = 0;
     this.starsEarned = [false, false, false];
     this.lastCheckpoint = null;
     this.goldCombo = 0;
@@ -858,6 +1084,8 @@ export class ZigzagEngine {
 
   private addObstacleToScene(obs: LevelObstacle, accentHex: number, hazardHex: number): void {
     let group: THREE.Group;
+    let animatedSubgroup: THREE.Group | undefined;
+    let warpMembraneMat: THREE.MeshBasicMaterial | undefined;
     let subBoxes: Array<{ zMin: number; zMax: number; yMin: number; yMax: number }> | undefined;
 
     if (obs.type === 'saw') {
@@ -869,6 +1097,25 @@ export class ZigzagEngine {
     } else if (obs.type === 'block') {
       group = createBlockObstacle(obs, accentHex, hazardHex);
       subBoxes = getBlockSubBoxes(obs);
+    } else if (obs.type === 'laserBar') {
+      group = createLaserBar(obs, hazardHex);
+    } else if (obs.type === 'patrolDrone') {
+      const res = createPatrolDrone(obs, accentHex, hazardHex);
+      group = res.group;
+      animatedSubgroup = res.droneBody;
+    } else if (obs.type === 'rotaryGate') {
+      const res = createRotaryGate(obs, accentHex, hazardHex);
+      group = res.group;
+      animatedSubgroup = res.rotor;
+    } else if (obs.type === 'orbitMine') {
+      const res = createOrbitMine(obs, accentHex, hazardHex);
+      group = res.group;
+      animatedSubgroup = res.rotor;
+    } else if (obs.type === 'warpGate') {
+      const res = createWarpGate(obs);
+      group = res.group;
+      animatedSubgroup = res.rotor;
+      warpMembraneMat = res.membraneMat;
     } else {
       group = createSpeedGate(obs.z, obs.multiplier);
     }
@@ -877,6 +1124,8 @@ export class ZigzagEngine {
     this.runtimeObstacles.push({
       data: obs,
       group,
+      animatedSubgroup,
+      warpMembraneMat,
       subBoxes,
       triggered: false,
       destroyed: false,
@@ -894,11 +1143,19 @@ export class ZigzagEngine {
   private disposeGroupResources(group: THREE.Group): void {
     this.levelGroup.remove(group);
     group.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh) {
-        const m = obj as THREE.Mesh;
-        m.geometry?.dispose();
-        if (Array.isArray(m.material)) m.material.forEach((mat) => mat.dispose());
-        else m.material?.dispose();
+      const renderObj = obj as THREE.Mesh | THREE.LineSegments;
+      if ((renderObj as THREE.Mesh).isMesh || (renderObj as THREE.LineSegments).isLineSegments) {
+        if (renderObj.geometry && !renderObj.geometry.userData?.sharedResource) {
+          renderObj.geometry.dispose();
+        }
+        const mat = renderObj.material;
+        if (Array.isArray(mat)) {
+          mat.forEach((m) => {
+            if (m && !m.userData?.sharedResource) m.dispose();
+          });
+        } else if (mat && !mat.userData?.sharedResource) {
+          mat.dispose();
+        }
       }
     });
   }
@@ -926,7 +1183,13 @@ export class ZigzagEngine {
 
     const cullZ = currentZ - 42;
     this.runtimeObstacles = this.runtimeObstacles.filter((obs) => {
-      const obsEnd = obs.data.type === 'spikes' ? obs.data.zEnd : obs.data.z + 6;
+      const d = obs.data;
+      const obsEnd =
+        d.type === 'spikes'
+          ? d.zEnd
+          : d.type === 'laserBar'
+            ? Math.max(d.z1, d.z2) + 4
+            : d.z + 6;
       if (obsEnd < cullZ) {
         this.disposeGroupResources(obs.group);
         return false;
@@ -1034,13 +1297,18 @@ export class ZigzagEngine {
       this.levelGroup.remove(this.levelGroup.children[0]);
     }
     this.levelGroup.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh) {
-        const m = obj as THREE.Mesh;
-        m.geometry?.dispose();
-        if (Array.isArray(m.material)) {
-          m.material.forEach((mat) => mat.dispose());
-        } else {
-          m.material?.dispose();
+      const renderObj = obj as THREE.Mesh | THREE.LineSegments;
+      if ((renderObj as THREE.Mesh).isMesh || (renderObj as THREE.LineSegments).isLineSegments) {
+        if (renderObj.geometry && !renderObj.geometry.userData?.sharedResource) {
+          renderObj.geometry.dispose();
+        }
+        const mat = renderObj.material;
+        if (Array.isArray(mat)) {
+          mat.forEach((m) => {
+            if (m && !m.userData?.sharedResource) m.dispose();
+          });
+        } else if (mat && !mat.userData?.sharedResource) {
+          mat.dispose();
         }
       }
     });
@@ -1122,13 +1390,34 @@ export class ZigzagEngine {
 
     if (this.scene.fog && this.scene.background instanceof THREE.Color) {
       this.baseFogColor.getHSL(_hsl);
-      const targetHue =
-        this.powerActiveRemaining > 0 && this.currentSkin.powerType === 'slowmo'
-          ? 0.76
-          : (_hsl.h + reactiveHueShift * 0.15) % 1.0;
-      const targetLight = Math.min(0.068, _hsl.l + this.smoothedIntensity * 0.014);
-      _color.setHSL(targetHue, Math.min(0.75, _hsl.s + 0.06), targetLight);
-      this.scene.background.lerp(_color, Math.min(1, dt * 5));
+      let targetHue = (_hsl.h + reactiveHueShift * 0.15) % 1.0;
+      let targetSat = Math.min(0.75, _hsl.s + 0.06);
+      let targetLight = Math.min(0.068, _hsl.l + this.smoothedIntensity * 0.014);
+
+      if (this.envEventPhase === 'active') {
+        if (this.envEventType === 'gravityShift') {
+          targetHue = 0.94;
+          targetSat = 0.72;
+          targetLight = 0.075;
+        } else if (this.envEventType === 'glitchStorm') {
+          targetHue = (Math.floor(this.totalElapsed * 14) % 2 === 0) ? 0.82 : 0.52;
+          targetSat = 0.78;
+          targetLight = 0.072;
+        } else if (this.envEventType === 'solarFlare') {
+          targetHue = 0.1;
+          targetSat = 0.76;
+          targetLight = 0.075;
+        } else if (this.envEventType === 'magTurbulence') {
+          targetHue = 0.57;
+          targetSat = 0.75;
+          targetLight = 0.072;
+        }
+      } else if (this.powerActiveRemaining > 0 && (this.currentSkin.powerType === 'slowmo' || this.currentSkin.powerType === 'stasis')) {
+        targetHue = 0.76;
+      }
+
+      _color.setHSL(targetHue, targetSat, targetLight);
+      this.scene.background.lerp(_color, Math.min(1, dt * 6));
       (this.scene.fog as THREE.FogExp2).color.copy(this.scene.background);
     }
   }
@@ -1221,24 +1510,27 @@ export class ZigzagEngine {
     _tailColor.setHSL((_hsl.h + 0.26) % 1.0, 0.95, 0.55);
 
     for (let i = 0; i < totalPts; i++) {
-      const pt = i < ptsCount ? this.trailVertices[i] : { z: this.playerZ, y: this.playerY };
+      const pt =
+        i < ptsCount
+          ? this.trailVertices[i]
+          : { x: this.playerX, z: this.playerZ, y: this.playerY };
       const t = totalPts <= 1 ? 1 : i / (totalPts - 1);
       _color.copy(_tailColor).lerp(_headColor, t);
 
       const idx = i * 6;
-      this.trailPositionsA[idx] = -halfW;
+      this.trailPositionsA[idx] = pt.x - halfW;
       this.trailPositionsA[idx + 1] = pt.y;
       this.trailPositionsA[idx + 2] = pt.z;
 
-      this.trailPositionsA[idx + 3] = halfW;
+      this.trailPositionsA[idx + 3] = pt.x + halfW;
       this.trailPositionsA[idx + 4] = pt.y;
       this.trailPositionsA[idx + 5] = pt.z;
 
-      this.trailPositionsB[idx] = 0;
+      this.trailPositionsB[idx] = pt.x;
       this.trailPositionsB[idx + 1] = pt.y - halfH;
       this.trailPositionsB[idx + 2] = pt.z;
 
-      this.trailPositionsB[idx + 3] = 0;
+      this.trailPositionsB[idx + 3] = pt.x;
       this.trailPositionsB[idx + 4] = pt.y + halfH;
       this.trailPositionsB[idx + 5] = pt.z;
 
@@ -1258,7 +1550,7 @@ export class ZigzagEngine {
       this.trailColorsB[idx + 5] = _color.b;
 
       const lIdx = i * 3;
-      this.trailLinePositions[lIdx] = 0;
+      this.trailLinePositions[lIdx] = pt.x;
       this.trailLinePositions[lIdx + 1] = pt.y;
       this.trailLinePositions[lIdx + 2] = pt.z;
     }
@@ -1342,31 +1634,472 @@ export class ZigzagEngine {
             this.awardNearMiss();
           }
         }
+      } else if (data.type === 'laserBar') {
+        const minZ = Math.min(data.z1, data.z2) - nmR - 0.35;
+        const maxZ = Math.max(data.z1, data.z2) + nmR + 0.35;
+        if (z < minZ || z > maxZ) continue;
+        const distSq = distSqToSegment2D(z, y, data.z1, data.y1, data.z2, data.y2);
+        const effR = (data.thickness ?? 0.24) * 0.65 + r;
+        if (distSq < effR * effR) return obs;
+
+        const nearR = effR + NEAR_MISS_MARGIN;
+        if (!obs.nearMissed && distSq < nearR * nearR) {
+          obs.nearMissed = true;
+          this.awardNearMiss();
+        }
+      } else if (data.type === 'patrolDrone') {
+        if (Math.abs(z - data.z) > data.radius + nmR) continue;
+        const droneY = obs.animatedSubgroup ? obs.animatedSubgroup.position.y : data.baseY;
+        const dz = z - data.z;
+        const dy = y - droneY;
+        const distSq = dz * dz + dy * dy;
+        const effR = data.radius * 0.8 + r;
+        if (distSq < effR * effR) return obs;
+
+        const nearR = effR + NEAR_MISS_MARGIN;
+        if (!obs.nearMissed && distSq < nearR * nearR) {
+          obs.nearMissed = true;
+          this.awardNearMiss();
+        }
+      } else if (data.type === 'rotaryGate') {
+        if (Math.abs(z - data.z) > data.armLength + nmR + 0.3) continue;
+        const rot = obs.animatedSubgroup ? obs.animatedSubgroup.rotation.x : 0;
+        const blades = data.blades ?? 2;
+
+        // Center hub check
+        const dzHub = z - data.z;
+        const dyHub = y - data.y;
+        const hubDistSq = dzHub * dzHub + dyHub * dyHub;
+        const hubEffR = 0.42 + r;
+        if (hubDistSq < hubEffR * hubEffR) return obs;
+
+        for (let i = 0; i < blades; i++) {
+          const alpha = rot + (i / blades) * Math.PI * 2;
+          const tipZ = data.z + data.armLength * Math.sin(alpha);
+          const tipY = data.y + data.armLength * Math.cos(alpha);
+          const distSq = distSqToSegment2D(z, y, data.z, data.y, tipZ, tipY);
+          const effR = 0.14 + r;
+          if (distSq < effR * effR) return obs;
+
+          const nearR = effR + NEAR_MISS_MARGIN;
+          if (!obs.nearMissed && distSq < nearR * nearR) {
+            obs.nearMissed = true;
+            this.awardNearMiss();
+          }
+        }
+      } else if (data.type === 'orbitMine') {
+        if (Math.abs(z - data.z) > data.orbitRadius + data.mineRadius + nmR) continue;
+        const rot = obs.animatedSubgroup ? obs.animatedSubgroup.rotation.x : 0;
+        const offZ = data.orbitRadius * Math.sin(rot);
+        const offY = data.orbitRadius * Math.cos(rot);
+        const effR = data.mineRadius * 0.8 + r;
+        const nearR = effR + NEAR_MISS_MARGIN;
+
+        for (const dir of [1, -1]) {
+          const mz = data.z + dir * offZ;
+          const my = data.y + dir * offY;
+          const dz = z - mz;
+          const dy = y - my;
+          const distSq = dz * dz + dy * dy;
+          if (distSq < effR * effR) return obs;
+          if (!obs.nearMissed && distSq < nearR * nearR) {
+            obs.nearMissed = true;
+            this.awardNearMiss();
+          }
+        }
       }
     }
 
     return null;
   }
 
+  private triggerCameraShake(
+    force: number,
+    impulseY = 0,
+    impulseZ = 0,
+    impulseX = 0,
+    decayRate = 1.65
+  ): void {
+    const clampedForce = THREE.MathUtils.clamp(force, 0, 1.35);
+    this.cameraTrauma = Math.min(1.25, Math.max(this.cameraTrauma, clampedForce * 0.88) + clampedForce * 0.12);
+    this.traumaDecayRate = decayRate;
+    const motionScale = this.prefersReducedMotion ? 0.25 : 1.0;
+    const kick = (1.6 + clampedForce * 2.2) * motionScale;
+    this.camImpulseVel.x = THREE.MathUtils.clamp(this.camImpulseVel.x + impulseX * kick, -7, 7);
+    this.camImpulseVel.y = THREE.MathUtils.clamp(this.camImpulseVel.y + impulseY * kick, -7, 7);
+    this.camImpulseVel.z = THREE.MathUtils.clamp(this.camImpulseVel.z + impulseZ * kick, -7, 7);
+  }
+
+  private resetCameraShake(): void {
+    this.cameraTrauma = 0;
+    this.proximityShake = 0;
+    this.camShakeOffset.set(0, 0, 0);
+    this.camImpulseOffset.set(0, 0, 0);
+    this.camImpulseVel.set(0, 0, 0);
+  }
+
+  private computeCollisionForce(obs: RuntimeObstacle | null): {
+    force: number;
+    dirY: number;
+    dirZ: number;
+  } {
+    const endlessRamp =
+      this.gameMode === 'endless' ? Math.min(0.45, this.playerZ / 1500) : 0;
+    const speedRatio =
+      (this.activeSpeedMultiplier + endlessRamp) *
+      (this.gameMode === 'hardcore' ? 1.15 : 1.0);
+
+    let severity = 1.0;
+    let dirY = 0;
+    let dirZ = -1.0;
+
+    if (obs) {
+      const t = obs.data.type;
+      severity =
+        t === 'block' || t === 'rotaryGate'
+          ? 1.25
+          : t === 'spikes' || t === 'laserBar'
+            ? 1.12
+            : t === 'saw' || t === 'patrolDrone'
+              ? 1.02
+              : 0.95;
+
+      const center = this.getObstacleCenter(obs);
+      const dy = this.playerY - center.y;
+      const dz = this.playerZ - center.z;
+      const len = Math.hypot(dy, dz);
+      if (len > 0.05) {
+        dirY = dy / len;
+        dirZ = (dz / len) * 0.55 - 0.65;
+      } else {
+        dirY = this.playerY < 6 ? 0.55 : -0.55;
+        dirZ = -0.85;
+      }
+    }
+
+    const force = THREE.MathUtils.clamp(0.72 * severity * speedRatio, 0.55, 1.35);
+    return { force, dirY, dirZ };
+  }
+
+  private computeHazardProximity(z: number, y: number): number {
+    const PROXIMITY_RANGE = 2.25;
+    let maxProx = 0;
+
+    for (const obs of this.runtimeObstacles) {
+      if (obs.destroyed) continue;
+      const data = obs.data;
+      if (data.type === 'speedGate' || data.type === 'warpGate') continue;
+
+      let clearance = PROXIMITY_RANGE;
+
+      if (data.type === 'saw') {
+        if (Math.abs(z - data.z) > data.radius + HITBOX_RADIUS + PROXIMITY_RANGE) continue;
+        const dist = Math.hypot(z - data.z, y - data.y);
+        clearance = dist - (data.radius * 0.78 + HITBOX_RADIUS);
+      } else if (data.type === 'starMine') {
+        if (Math.abs(z - data.z) > data.radius + HITBOX_RADIUS + PROXIMITY_RANGE) continue;
+        const dist = Math.hypot(z - data.z, y - data.y);
+        clearance = dist - (data.radius * 0.68 + HITBOX_RADIUS);
+      } else if (data.type === 'block' && obs.subBoxes) {
+        if (Math.abs(z - data.z) > data.width * 0.6 + HITBOX_RADIUS + PROXIMITY_RANGE) continue;
+        for (const b of obs.subBoxes) {
+          const inset = 0.06;
+          const cz = THREE.MathUtils.clamp(z, b.zMin + inset, b.zMax - inset);
+          const cy = THREE.MathUtils.clamp(y, b.yMin + inset, b.yMax - inset);
+          const dist = Math.hypot(z - cz, y - cy);
+          const c = dist - HITBOX_RADIUS;
+          if (c < clearance) clearance = c;
+        }
+      } else if (data.type === 'spikes') {
+        if (z < data.zStart - PROXIMITY_RANGE || z > data.zEnd + PROXIMITY_RANGE) continue;
+        const forgivingH = data.height * 0.78;
+        const dzEdge = z < data.zStart ? data.zStart - z : z > data.zEnd ? z - data.zEnd : 0;
+        const dyEdge =
+          data.placement === 'floor'
+            ? Math.max(0, y - HITBOX_RADIUS - forgivingH)
+            : Math.max(0, TRACK_CEILING_Y - forgivingH - (y + HITBOX_RADIUS));
+        clearance = Math.hypot(dzEdge, dyEdge);
+      } else if (data.type === 'laserBar') {
+        const minZ = Math.min(data.z1, data.z2) - PROXIMITY_RANGE - 0.4;
+        const maxZ = Math.max(data.z1, data.z2) + PROXIMITY_RANGE + 0.4;
+        if (z < minZ || z > maxZ) continue;
+        const dist = Math.sqrt(distSqToSegment2D(z, y, data.z1, data.y1, data.z2, data.y2));
+        clearance = dist - ((data.thickness ?? 0.24) * 0.65 + HITBOX_RADIUS);
+      } else if (data.type === 'patrolDrone') {
+        if (Math.abs(z - data.z) > data.radius + HITBOX_RADIUS + PROXIMITY_RANGE) continue;
+        const droneY = obs.animatedSubgroup ? obs.animatedSubgroup.position.y : data.baseY;
+        const dist = Math.hypot(z - data.z, y - droneY);
+        clearance = dist - (data.radius * 0.8 + HITBOX_RADIUS);
+      } else if (data.type === 'rotaryGate') {
+        if (Math.abs(z - data.z) > data.armLength + HITBOX_RADIUS + PROXIMITY_RANGE) continue;
+        const rot = obs.animatedSubgroup ? obs.animatedSubgroup.rotation.x : 0;
+        const blades = data.blades ?? 2;
+        const hubC = Math.hypot(z - data.z, y - data.y) - (0.42 + HITBOX_RADIUS);
+        if (hubC < clearance) clearance = hubC;
+        for (let i = 0; i < blades; i++) {
+          const alpha = rot + (i / blades) * Math.PI * 2;
+          const tipZ = data.z + data.armLength * Math.sin(alpha);
+          const tipY = data.y + data.armLength * Math.cos(alpha);
+          const dist = Math.sqrt(distSqToSegment2D(z, y, data.z, data.y, tipZ, tipY));
+          const c = dist - (0.14 + HITBOX_RADIUS);
+          if (c < clearance) clearance = c;
+        }
+      } else if (data.type === 'orbitMine') {
+        if (Math.abs(z - data.z) > data.orbitRadius + data.mineRadius + HITBOX_RADIUS + PROXIMITY_RANGE) {
+          continue;
+        }
+        const rot = obs.animatedSubgroup ? obs.animatedSubgroup.rotation.x : 0;
+        const offZ = data.orbitRadius * Math.sin(rot);
+        const offY = data.orbitRadius * Math.cos(rot);
+        const effR = data.mineRadius * 0.8 + HITBOX_RADIUS;
+        for (const dir of [1, -1]) {
+          const dist = Math.hypot(z - (data.z + dir * offZ), y - (data.y + dir * offY));
+          const c = dist - effR;
+          if (c < clearance) clearance = c;
+        }
+      }
+
+      if (clearance < PROXIMITY_RANGE) {
+        const clamped = Math.max(0, clearance);
+        const prox = Math.pow(1 - clamped / PROXIMITY_RANGE, 2);
+        if (prox > maxProx) maxProx = prox;
+      }
+    }
+
+    return maxProx;
+  }
+
   private awardNearMiss(): void {
     this.nearMissCount += 1;
     const bonus = Math.round(50 * this.streakMultiplier);
-    this.score += bonus;
+    this.addScore(bonus);
     this.powerCharge = Math.min(100, this.powerCharge + 8);
+    this.triggerCameraShake(0.26 * Math.min(1.3, this.activeSpeedMultiplier), 0.15, -0.14);
     this.pushCallout(`Near Miss +${bonus}`);
-    this.spawnBurst(0, this.playerY, this.playerZ, 6, 0x38bdf8, 5);
+    this.spawnBurst(this.playerX, this.playerY, this.playerZ, 6, 0x38bdf8, 5);
+    this.callbacks.onChallengeEvent?.({ nearMisses: 1 });
+  }
+
+  private fireBarrageRocket(): void {
+    let slot: BarrageProjectile | null = null;
+    for (const p of this.barrageProjectiles) {
+      if (!p.active) {
+        slot = p;
+        break;
+      }
+    }
+    if (!slot) return;
+
+    let bestDistSq = Infinity;
+    let targetZ = this.playerZ + 18;
+    let targetY = this.playerY;
+
+    for (const obs of this.runtimeObstacles) {
+      if (obs.destroyed || !this.isDestructibleObstacle(obs, false)) continue;
+      const center = this.getObstacleCenter(obs);
+      const dz = center.z - this.playerZ;
+      if (dz < 1.5 || dz > 26) continue;
+      const dy = center.y - this.playerY;
+      const dSq = dz * dz + dy * dy * 1.4;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        targetZ = center.z;
+        targetY = center.y;
+      }
+    }
+
+    const dx = -this.playerX;
+    const dz = Math.max(1, targetZ - this.playerZ);
+    const dy = targetY - this.playerY;
+    const len = Math.hypot(dx, dy, dz);
+    const speed = 56;
+
+    slot.active = true;
+    slot.x = this.playerX;
+    slot.z = this.playerZ + 0.8;
+    slot.y = this.playerY;
+    slot.vx = (dx / len) * speed;
+    slot.vz = (dz / len) * speed;
+    slot.vy = (dy / len) * speed;
+    slot.life = 0.65;
+    soundEngine.playBarrageShot();
+  }
+
+  private updateBarrageProjectiles(dt: number): void {
+    let dirty = false;
+    for (let i = 0; i < BARRAGE_POOL_SIZE; i++) {
+      const p = this.barrageProjectiles[i];
+      if (!p.active) continue;
+      dirty = true;
+      p.life -= dt;
+      if (p.life <= 0) {
+        p.active = false;
+        _dummy.position.set(0, -100, 0);
+        _dummy.scale.setScalar(0);
+        _dummy.updateMatrix();
+        this.barrageMesh.setMatrixAt(i, _dummy.matrix);
+        continue;
+      }
+
+      p.x += p.vx * dt;
+      p.z += p.vz * dt;
+      p.y += p.vy * dt;
+
+      // Check collision with any destructible obstacle
+      let hit = false;
+      for (const obs of this.runtimeObstacles) {
+        if (obs.destroyed || !this.isDestructibleObstacle(obs, false)) continue;
+        const center = this.getObstacleCenter(obs);
+        const dz = center.z - p.z;
+        const dy = center.y - p.y;
+        const hitRadius =
+          obs.data.type === 'block'
+            ? Math.max(obs.data.width, obs.data.height) * 0.55
+            : obs.data.type === 'rotaryGate'
+              ? obs.data.armLength * 0.82
+              : obs.data.type === 'orbitMine'
+                ? obs.data.orbitRadius + obs.data.mineRadius
+                : obs.data.type === 'laserBar'
+                  ? 2.1
+                  : (obs.data as { radius?: number }).radius ?? 1.4;
+
+        if (dz * dz + dy * dy <= (hitRadius + 0.75) * (hitRadius + 0.75)) {
+          obs.destroyed = true;
+          obs.group.visible = false;
+          this.addScore(100);
+          this.callbacks.onChallengeEvent?.({ hazardsShattered: 1 });
+          this.spawnBurst(0, center.y, center.z, 22, 0xfb923c, 12);
+          soundEngine.playCollectGold(5);
+          this.triggerCameraShake(0.24 * Math.min(1.25, this.activeSpeedMultiplier), 0, -0.16);
+          hit = true;
+          break;
+        }
+      }
+
+      if (hit) {
+        p.active = false;
+        _dummy.position.set(0, -100, 0);
+        _dummy.scale.setScalar(0);
+        _dummy.updateMatrix();
+        this.barrageMesh.setMatrixAt(i, _dummy.matrix);
+        continue;
+      }
+
+      _dummy.position.set(p.x, p.y, p.z);
+      _dummy.rotation.set(-Math.atan2(p.vy, p.vz), 0, 0);
+      _dummy.scale.setScalar(1.0);
+      _dummy.updateMatrix();
+      this.barrageMesh.setMatrixAt(i, _dummy.matrix);
+    }
+
+    if (dirty) {
+      this.barrageMesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  private updateEnvironmentalEvents(dt: number): void {
+    if (this.phase !== 'playing') return;
+
+    if (this.envEventPhase === 'idle') {
+      this.nextEnvEventCooldown -= dt;
+      if (this.nextEnvEventCooldown <= 0) {
+        const pool: EnvEventType[] = ['glitchStorm', 'gravityShift', 'solarFlare', 'magTurbulence'];
+        const candidates = pool.filter((e) => e !== this.envEventType);
+        const picked = candidates[Math.floor(Math.random() * candidates.length)];
+        this.envEventType = picked;
+        this.envEventPhase = 'warning';
+        this.envEventTimer = 1.45;
+        soundEngine.playEnvWarning(picked);
+        const label =
+          picked === 'glitchStorm'
+            ? '⚠ Incoming: Glitch Storm'
+            : picked === 'gravityShift'
+              ? '⚠ Incoming: Gravity Shift'
+              : picked === 'solarFlare'
+                ? '⚠ Incoming: Solar Surge'
+                : '⚠ Incoming: Ion Crosswind';
+        this.pushCallout(label);
+        this.emitHud(true);
+      }
+      return;
+    }
+
+    if (this.envEventPhase === 'warning') {
+      this.envEventTimer -= dt;
+      if (this.envEventTimer <= 0 && this.envEventType) {
+        this.envEventPhase = 'active';
+        const isDisruptive =
+          this.envEventType === 'glitchStorm' || this.envEventType === 'gravityShift';
+        const stabReduction = isDisruptive
+          ? Math.max(0.55, 1 - this.upgradeLevels.stabilizer * 0.08)
+          : 1.0;
+        this.envEventTimer = (isDisruptive ? 4.6 : 5.5) * stabReduction;
+        soundEngine.playEnvEventStart(this.envEventType);
+        this.triggerCameraShake(0.32, 0.18, -0.22);
+        this.spawnBurst(
+          this.playerX,
+          this.playerY,
+          this.playerZ + 4,
+          16,
+          this.envEventType === 'solarFlare'
+            ? 0xfacc15
+            : this.envEventType === 'gravityShift'
+              ? 0xf43f5e
+              : 0x22d3ee,
+          9
+        );
+        this.emitHud(true);
+      }
+      return;
+    }
+
+    // Active phase
+    this.envEventTimer -= dt;
+    if (this.envEventType === 'magTurbulence') {
+      this.envParticleTimer -= dt;
+      if (this.envParticleTimer <= 0) {
+        this.envParticleTimer = 0.14;
+        this.spawnBurst(
+          (Math.random() - 0.5) * 4,
+          1.2 + Math.random() * 9.5,
+          this.playerZ + 16,
+          3,
+          0x38bdf8,
+          6
+        );
+      }
+    }
+
+    if (this.envEventTimer <= 0) {
+      this.envEventPhase = 'idle';
+      this.envEventTimer = 0;
+      this.nextEnvEventCooldown = 14.0 + Math.random() * 7.5;
+      if (this.upgradeLevels.stabilizer > 0) {
+        this.powerCharge = Math.min(100, this.powerCharge + this.upgradeLevels.stabilizer * 15);
+      }
+      this.callbacks.onChallengeEvent?.({ eventsSurvived: 1 });
+      this.pushCallout('Environmental Anomaly Cleared');
+      this.emitHud(true);
+    }
   }
 
   private updateSpecialPowerState(dt: number): void {
     const power = this.currentSkin.powerType;
+    const capBonus = 1 + this.upgradeLevels.capacitor * 0.14;
+    const envChargeBoost =
+      this.envEventPhase === 'active' &&
+      (this.envEventType === 'solarFlare' || this.envEventType === 'magTurbulence')
+        ? 1.5
+        : 1.0;
 
     if (this.powerActiveRemaining > 0) {
       this.powerActiveRemaining = Math.max(0, this.powerActiveRemaining - dt);
       if (this.powerActiveRemaining === 0) {
+        this.shieldCharges = 0;
         this.shieldActive = false;
       }
     } else {
-      this.powerCharge = Math.min(100, this.powerCharge + dt * 7.0);
+      this.powerCharge = Math.min(100, this.powerCharge + dt * 7.0 * capBonus * envChargeBoost);
     }
 
     if (this.invulnTimer > 0) {
@@ -1375,11 +2108,25 @@ export class ZigzagEngine {
 
     const isPowerActive = this.powerActiveRemaining > 0;
     this.craft.shieldMesh.visible =
-      (isPowerActive && (power === 'shield' || power === 'phase' || power === 'warp')) ||
+      (isPowerActive &&
+        (power === 'shield' ||
+          power === 'phase' ||
+          power === 'warp' ||
+          power === 'smash' ||
+          power === 'aegis' ||
+          power === 'stasis' ||
+          power === 'deflect' ||
+          power === 'revive')) ||
       this.invulnTimer > 0;
     this.craft.auraRing.visible =
       isPowerActive &&
-      (power === 'magnet' || power === 'overdrive' || power === 'vortex' || power === 'pulse');
+      (power === 'magnet' ||
+        power === 'overdrive' ||
+        power === 'vortex' ||
+        power === 'pulse' ||
+        power === 'smash' ||
+        power === 'deflect' ||
+        power === 'revive');
     this.craft.laserBeam.visible = isPowerActive && power === 'breaker';
 
     if (this.craft.shieldMesh.visible) {
@@ -1388,7 +2135,8 @@ export class ZigzagEngine {
     }
     if (this.craft.auraRing.visible) {
       this.craft.auraRing.rotation.x += dt * 5.0;
-      const s = 1.0 + Math.sin(this.totalElapsed * 12) * 0.12;
+      const baseScale = power === 'smash' ? 1.55 : power === 'deflect' ? 1.35 : 1.0;
+      const s = baseScale + Math.sin(this.totalElapsed * 12) * 0.14;
       this.craft.auraRing.scale.setScalar(s);
     }
 
@@ -1396,31 +2144,125 @@ export class ZigzagEngine {
       this.triggerEmpBlast(2.6, 75);
     }
 
+    if (isPowerActive && power === 'deflect') {
+      this.deflectPulseCooldown -= dt;
+      if (this.deflectPulseCooldown <= 0) {
+        this.deflectPulseCooldown = 0.08;
+        const rSq = 3.05 * 3.05;
+        let deflected = 0;
+        for (const obs of this.runtimeObstacles) {
+          if (obs.destroyed || !this.isDestructibleObstacle(obs, false)) continue;
+          const center = this.getObstacleCenter(obs);
+          const dz = center.z - this.playerZ;
+          const dy = center.y - this.playerY;
+          if (dz * dz + dy * dy <= rSq) {
+            obs.destroyed = true;
+            obs.group.visible = false;
+            deflected += 1;
+            this.addScore(125);
+            this.spawnBurst(this.playerX, center.y, center.z, 16, 0x38bdf8, 10);
+          }
+        }
+        if (deflected > 0) {
+          this.callbacks.onChallengeEvent?.({ hazardsShattered: deflected });
+          soundEngine.playCollectGold(4);
+          this.triggerCameraShake(0.22, 0.12, -0.14);
+        }
+      }
+    }
+
+    if (isPowerActive && power === 'barrage') {
+      this.barrageCooldown -= dt;
+      if (this.barrageCooldown <= 0) {
+        this.barrageCooldown = 0.24;
+        this.fireBarrageRocket();
+      }
+    }
+
+    if (isPowerActive && power === 'smash') {
+      const smashRadius = 2.4;
+      const smashRSq = smashRadius * smashRadius;
+      for (const obs of this.runtimeObstacles) {
+        if (obs.destroyed || obs.data.type === 'speedGate' || obs.data.type === 'warpGate') continue;
+        const d = obs.data;
+        let hit = false;
+        let burstY = this.playerY;
+        let burstZ = this.playerZ;
+
+        if (d.type === 'spikes') {
+          if (this.playerZ >= d.zStart - 1.2 && this.playerZ <= d.zEnd + 1.2) {
+            const dy =
+              d.placement === 'floor'
+                ? this.playerY - d.height * 0.6
+                : TRACK_CEILING_Y - d.height * 0.6 - this.playerY;
+            if (dy < smashRadius) {
+              hit = true;
+              burstZ = this.playerZ;
+              burstY = d.placement === 'floor' ? d.height * 0.5 : TRACK_CEILING_Y - d.height * 0.5;
+            }
+          }
+        } else if (d.type === 'laserBar') {
+          const distSq = distSqToSegment2D(this.playerZ, this.playerY, d.z1, d.y1, d.z2, d.y2);
+          if (distSq <= smashRSq) {
+            hit = true;
+            burstZ = (d.z1 + d.z2) * 0.5;
+            burstY = (d.y1 + d.y2) * 0.5;
+          }
+        } else {
+          const center = this.getObstacleCenter(obs);
+          const dz = center.z - this.playerZ;
+          const dy = center.y - this.playerY;
+          const extra =
+            d.type === 'rotaryGate'
+              ? d.armLength * 0.65
+              : d.type === 'orbitMine'
+                ? d.orbitRadius + d.mineRadius
+                : d.type === 'block'
+                  ? Math.max(d.width, d.height) * 0.42
+                  : (d as { radius?: number }).radius ?? 1.2;
+          if (dz * dz + dy * dy <= (smashRadius + extra) * (smashRadius + extra)) {
+            hit = true;
+            burstZ = center.z;
+            burstY = center.y;
+          }
+        }
+
+        if (hit) {
+          obs.destroyed = true;
+          obs.group.visible = false;
+          this.addScore(120);
+          this.callbacks.onChallengeEvent?.({ hazardsShattered: 1 });
+          this.triggerCameraShake(0.36 * Math.min(1.3, this.activeSpeedMultiplier), 0, -0.26);
+          this.spawnBurst(0, burstY, burstZ, 24, 0xc084fc, 12);
+          soundEngine.playSmashImpact();
+        }
+      }
+    }
+
     if (isPowerActive && power === 'breaker') {
       const beamEndZ = this.playerZ + 13.0;
       for (const obs of this.runtimeObstacles) {
-        if (obs.destroyed) continue;
+        if (obs.destroyed || !this.isDestructibleObstacle(obs, false)) continue;
         const d = obs.data;
-        if (d.type === 'saw' || d.type === 'starMine') {
-          if (d.z > this.playerZ && d.z <= beamEndZ && Math.abs(d.y - this.playerY) < d.radius + 0.9) {
-            obs.destroyed = true;
-            obs.group.visible = false;
-            this.score += 75;
-            this.spawnBurst(0, d.y, d.z, 20, 0xfb7185, 11);
-            soundEngine.playCollectGold(4);
-          }
-        } else if (d.type === 'block') {
-          if (
-            d.z > this.playerZ &&
-            d.z <= beamEndZ &&
-            Math.abs(d.y - this.playerY) < d.height * 0.5 + 0.65
-          ) {
-            obs.destroyed = true;
-            obs.group.visible = false;
-            this.score += 75;
-            this.spawnBurst(0, d.y, d.z, 22, 0xfb7185, 11);
-            soundEngine.playCollectGold(4);
-          }
+        const center = this.getObstacleCenter(obs);
+        const reachY =
+          d.type === 'block'
+            ? d.height * 0.5 + 0.65
+            : d.type === 'rotaryGate'
+              ? d.armLength + 0.65
+              : d.type === 'orbitMine'
+                ? d.orbitRadius + d.mineRadius + 0.65
+                : d.type === 'laserBar'
+                  ? Math.abs(d.y1 - d.y2) * 0.5 + 0.8
+                  : ((d as { radius?: number }).radius ?? 1.2) + 0.9;
+
+        if (center.z > this.playerZ && center.z <= beamEndZ && Math.abs(center.y - this.playerY) < reachY) {
+          obs.destroyed = true;
+          obs.group.visible = false;
+          this.addScore(75);
+          this.callbacks.onChallengeEvent?.({ hazardsShattered: 1 });
+          this.spawnBurst(0, center.y, center.z, 20, 0xfb7185, 11);
+          soundEngine.playCollectGold(4);
         }
       }
     }
@@ -1433,17 +2275,30 @@ export class ZigzagEngine {
     const power = this.currentSkin.powerType;
     const isPowerActive = this.powerActiveRemaining > 0;
     const modeBaseMult = this.gameMode === 'hardcore' ? 1.15 : 1.0;
-    const slowMoFactor = isPowerActive && power === 'slowmo' ? 0.62 : 1.0;
+    const slowMoFactor =
+      isPowerActive && power === 'slowmo'
+        ? 0.62
+        : isPowerActive && power === 'stasis'
+          ? 0.56
+          : 1.0;
     const warpFactor = isPowerActive && power === 'warp' ? 1.42 : 1.0;
     const endlessRamp =
       this.gameMode === 'endless' ? Math.min(0.45, this.playerZ / 1500) : 0;
+    const upgradeGoldMult = 1 + this.upgradeLevels.collector * 0.08;
+    const solarEventMult =
+      this.envEventPhase === 'active' && this.envEventType === 'solarFlare' ? 1.5 : 1.0;
     const scoreMult =
       (this.gameMode === 'hardcore' ? 2.0 : 1.0) *
       (isPowerActive && power === 'overdrive' ? 2.5 : 1.0) *
       (isPowerActive && power === 'vortex' ? 2.0 : 1.0) *
+      upgradeGoldMult *
+      solarEventMult *
       this.streakMultiplier;
 
-    const climbInput = this.gameMode === 'inverted' ? !this.isHolding : this.isHolding;
+    const gravityInverted =
+      (this.gameMode === 'inverted') !==
+      (this.envEventPhase === 'active' && this.envEventType === 'gravityShift');
+    const climbInput = gravityInverted ? !this.isHolding : this.isHolding;
 
     while (remaining > 0 && this.phase === 'playing') {
       const step = Math.min(remaining, MAX_STEP);
@@ -1471,7 +2326,8 @@ export class ZigzagEngine {
       }
 
       if (nextRail !== this.railState) {
-        this.trailVertices.push({ z: this.playerZ, y: nextY });
+        this.trailVertices.push({ x: this.playerX, z: this.playerZ, y: nextY });
+        this.lastTrailSampleX = this.playerX;
         if (this.trailVertices.length > MAX_TRAIL_POINTS - 2) {
           this.trailVertices.shift();
         }
@@ -1480,20 +2336,40 @@ export class ZigzagEngine {
 
       this.playerY = nextY;
 
+      // Spatial Warp timers & smooth X-axis displacement
+      if (this.xShiftTimer > 0) this.xShiftTimer = Math.max(0, this.xShiftTimer - step);
+      if (this.invertCamTimer > 0) this.invertCamTimer = Math.max(0, this.invertCamTimer - step);
+      if (this.mirrorCamTimer > 0) this.mirrorCamTimer = Math.max(0, this.mirrorCamTimer - step);
+
+      if (this.xShiftTimer <= 0 && this.invertCamTimer <= 0 && this.mirrorCamTimer <= 0) {
+        this.activeWarpEffect = null;
+      }
+
+      const targetPlayerX = this.xShiftTimer > 0 ? this.xShiftTarget : 0;
+      this.playerX = THREE.MathUtils.damp(this.playerX, targetPlayerX, 8.5, step);
+      if (Math.abs(this.playerX - this.lastTrailSampleX) >= 0.09) {
+        this.trailVertices.push({ x: this.playerX, z: this.playerZ, y: this.playerY });
+        this.lastTrailSampleX = this.playerX;
+        if (this.trailVertices.length > MAX_TRAIL_POINTS - 2) {
+          this.trailVertices.shift();
+        }
+      }
+
       // Infinity Sector Milestones every 250m
       if (this.gameMode === 'endless' && this.playerZ >= this.nextSectorZ) {
         this.currentSector += 1;
         this.nextSectorZ += SECTOR_DISTANCE;
         const sectorBonus = 500 * (this.currentSector - 1);
-        this.score += sectorBonus;
+        this.addScore(sectorBonus);
         this.powerCharge = Math.min(100, this.powerCharge + 45);
         soundEngine.playCheckpoint();
-        this.spawnBurst(0, this.playerY, this.playerZ, 26, 0x22d3ee, 11);
+        this.spawnBurst(this.playerX, this.playerY, this.playerZ, 26, 0x22d3ee, 11);
         this.pushCallout(`Sector 0${this.currentSector} · +${sectorBonus}`);
+        this.callbacks.onChallengeEvent?.({ sectorsClearedInRun: this.currentSector - 1 });
         this.emitHud(true);
       }
 
-      // Speed gates
+      // Speed gates & Warp gates
       for (const obs of this.runtimeObstacles) {
         if (obs.data.type === 'speedGate' && !obs.triggered && this.playerZ >= obs.data.z) {
           obs.triggered = true;
@@ -1502,6 +2378,43 @@ export class ZigzagEngine {
           if (Math.abs(prev - obs.data.multiplier) > 0.05) {
             soundEngine.playSpeedGate(obs.data.multiplier > prev);
           }
+        } else if (obs.data.type === 'warpGate' && !obs.triggered && this.playerZ >= obs.data.z) {
+          obs.triggered = true;
+          const dur = obs.data.duration ?? 4.2;
+          const eff = obs.data.warpEffect;
+          this.activeWarpEffect = eff;
+
+          if (eff === 'shiftLeft') {
+            this.xShiftTarget = -1.45;
+            this.xShiftTimer = dur;
+            this.pushCallout('Spatial Warp: Left Lane');
+          } else if (eff === 'shiftRight') {
+            this.xShiftTarget = 1.45;
+            this.xShiftTimer = dur;
+            this.pushCallout('Spatial Warp: Right Lane');
+          } else if (eff === 'invertCam') {
+            this.invertCamTimer = dur;
+            this.pushCallout('Perspective Inverted 180°');
+          } else {
+            this.mirrorCamTimer = dur;
+            this.pushCallout('Flank Perspective Flipped');
+          }
+
+          if (obs.warpMembraneMat) {
+            obs.warpMembraneMat.opacity = 0.68;
+          }
+          soundEngine.playWarpGate(eff);
+          this.callbacks.onChallengeEvent?.({ warpGatesCleared: 1 });
+          this.triggerCameraShake(0.30, 0, -0.24);
+          this.spawnBurst(
+            this.playerX,
+            this.playerY,
+            obs.data.z,
+            24,
+            eff === 'invertCam' ? 0xf43f5e : eff === 'mirrorCam' ? 0x6366f1 : 0xa855f7,
+            10
+          );
+          this.emitHud(true);
         }
       }
 
@@ -1512,7 +2425,7 @@ export class ZigzagEngine {
           cp.activate();
           this.lastCheckpoint = cp.data;
           soundEngine.playCheckpoint();
-          this.spawnBurst(0, this.playerY, cp.data.z, 10, 0x34d399, 6);
+          this.spawnBurst(this.playerX, this.playerY, cp.data.z, 10, 0x34d399, 6);
           this.pushCallout('Checkpoint Reached');
         }
       }
@@ -1522,12 +2435,18 @@ export class ZigzagEngine {
         isPowerActive &&
         (power === 'magnet' || power === 'overdrive' || power === 'vortex' || power === 'warp');
       const magnetRange =
-        power === 'vortex' ? 12.5 : power === 'magnet' ? 7.5 : 5.8;
-      const pSq = PICKUP_RADIUS * PICKUP_RADIUS;
+        (power === 'vortex' ? 12.5 : power === 'magnet' ? 7.5 : 5.8) +
+        this.upgradeLevels.collector * 0.4;
+      const effPickupRadius = PICKUP_RADIUS + this.upgradeLevels.collector * 0.14;
+      const pSq = effPickupRadius * effPickupRadius;
+      const capBonus = 1 + this.upgradeLevels.capacitor * 0.14;
 
       for (const item of this.runtimeCollectibles) {
         if (item.collected) continue;
         const dZ = this.playerZ - item.data.z;
+        if (Math.abs(dZ) > (hasMagnet ? magnetRange : effPickupRadius + 0.5)) {
+          continue;
+        }
         const dY = this.playerY - item.data.y;
         const distSq = dZ * dZ + dY * dY;
 
@@ -1536,7 +2455,7 @@ export class ZigzagEngine {
           item.data.z = THREE.MathUtils.lerp(item.data.z, this.playerZ, pull);
           item.data.y = THREE.MathUtils.lerp(item.data.y, this.playerY, pull);
           item.group.position.set(0, item.data.y, item.data.z);
-        } else if (Math.abs(dZ) > PICKUP_RADIUS + 0.5) {
+        } else if (Math.abs(dZ) > effPickupRadius + 0.5) {
           continue;
         }
 
@@ -1545,23 +2464,24 @@ export class ZigzagEngine {
         if (curDz * curDz + curDy * curDy <= pSq) {
           item.collected = true;
           item.group.visible = false;
-          this.score += Math.round(item.data.value * scoreMult);
+          this.addScore(Math.round(item.data.value * scoreMult));
 
           if (item.data.type === 'gold') {
-            this.powerCharge = Math.min(100, this.powerCharge + 14);
+            this.powerCharge = Math.min(100, this.powerCharge + 14 * capBonus);
             soundEngine.playCollectGold(this.goldCombo);
             this.goldCombo += 1;
             this.goldComboTimer = 1.85;
             this.streakMultiplier = Math.min(3.0, 1.0 + Math.floor(this.goldCombo / 5) * 0.25);
             this.spawnBurst(0, item.data.y, item.data.z, 7, 0xfacc15, 6.5);
           } else {
-            this.powerCharge = Math.min(100, this.powerCharge + 35);
+            this.powerCharge = Math.min(100, this.powerCharge + 35 * capBonus);
             if (item.data.starIndex !== undefined) {
               this.starsEarned[item.data.starIndex] = true;
             }
             soundEngine.playCollectStar();
             this.spawnBurst(0, item.data.y, item.data.z, 16, 0xfef08a, 9);
             this.pushCallout('Sector Star Collected');
+            this.callbacks.onChallengeEvent?.({ starsCollected: 1 });
           }
           this.emitHud(true);
         }
@@ -1569,25 +2489,68 @@ export class ZigzagEngine {
 
       // Hazards
       const isIntangible =
-        (isPowerActive && (power === 'phase' || power === 'warp')) || this.invulnTimer > 0;
+        (isPowerActive && (power === 'phase' || power === 'warp' || power === 'smash')) ||
+        this.invulnTimer > 0;
       if (!isIntangible) {
         const hitObs = this.checkHazardCollision(this.playerZ, this.playerY);
         if (hitObs) {
-          if (this.shieldActive) {
-            this.shieldActive = false;
-            this.powerActiveRemaining = 0;
-            this.invulnTimer = 1.15;
-            this.shakeIntensity = 0.45;
-            if (hitObs.data.type !== 'spikes') {
-              hitObs.destroyed = true;
-              hitObs.group.visible = false;
+          if (this.shieldCharges > 0) {
+            this.shieldCharges -= 1;
+            this.shieldActive = this.shieldCharges > 0;
+            if (this.shieldCharges === 0 && power !== 'stasis') {
+              this.powerActiveRemaining = 0;
             }
-            this.spawnBurst(0, this.playerY, this.playerZ, 26, 0x22d3ee, 11);
-            soundEngine.playShieldPop();
-            this.pushCallout('Shield Absorbed Hit');
+            this.invulnTimer =
+              (power === 'revive' ? 1.6 : 1.15) + this.upgradeLevels.plating * 0.25;
+            const impact = this.computeCollisionForce(hitObs);
+            const shieldForce = power === 'revive' ? Math.max(0.95, impact.force * 1.1) : impact.force * 0.72;
+            this.triggerCameraShake(shieldForce, impact.dirY, impact.dirZ, (Math.random() - 0.5) * 0.4, 1.8);
+            this.callbacks.onChallengeEvent?.({ shieldsAbsorbed: 1 });
+
+            if (power === 'revive') {
+              // Second Wind: obliterate all hazards within 9.5m
+              let cleared = 0;
+              const rSq = 9.5 * 9.5;
+              for (const obs of this.runtimeObstacles) {
+                if (obs.destroyed || obs.data.type === 'speedGate' || obs.data.type === 'warpGate') continue;
+                const c = this.getObstacleCenter(obs);
+                const dz = c.z - this.playerZ;
+                const dy = c.y - this.playerY;
+                if (dz * dz + dy * dy <= rSq) {
+                  obs.destroyed = true;
+                  obs.group.visible = false;
+                  cleared += 1;
+                }
+              }
+              this.addScore(200);
+              this.callbacks.onChallengeEvent?.({ hazardsShattered: Math.max(1, cleared) });
+              this.spawnBurst(this.playerX, this.playerY, this.playerZ, 34, 0xf59e0b, 14);
+              soundEngine.playSmashImpact();
+              this.pushCallout('Second Wind! Revival Blast');
+            } else if (power === 'aegis') {
+              if (hitObs.data.type !== 'spikes') {
+                hitObs.destroyed = true;
+                hitObs.group.visible = false;
+                this.callbacks.onChallengeEvent?.({ hazardsShattered: 1 });
+              }
+              this.triggerEmpBlast(4.5, 90);
+              soundEngine.playShieldPop();
+              this.pushCallout(
+                this.shieldCharges > 0 ? 'Aegis Absorbed (1 Shield Left)' : 'Aegis Impact Burst'
+              );
+            } else {
+              if (hitObs.data.type !== 'spikes') {
+                hitObs.destroyed = true;
+                hitObs.group.visible = false;
+                this.callbacks.onChallengeEvent?.({ hazardsShattered: 1 });
+              }
+              this.spawnBurst(this.playerX, this.playerY, this.playerZ, 26, 0x22d3ee, 11);
+              soundEngine.playShieldPop();
+              this.pushCallout('Shield Absorbed Hit');
+            }
             this.emitHud(true);
           } else {
-            this.triggerCrash();
+            this.triggerCrash(hitObs);
             return;
           }
         }
@@ -1653,79 +2616,183 @@ export class ZigzagEngine {
     }
   }
 
-  private triggerCrash(): void {
+  private triggerCrash(hitObs: RuntimeObstacle | null = null): void {
     this.phase = 'crashed';
     this.crashTimer = 0;
-    this.shakeIntensity = 0.85;
+    const impact = this.computeCollisionForce(hitObs);
+    this.triggerCameraShake(
+      Math.max(0.88, impact.force),
+      impact.dirY,
+      impact.dirZ,
+      (Math.random() - 0.5) * 0.65,
+      1.45
+    );
     this.craft.group.visible = false;
     this.craft.shieldMesh.visible = false;
     this.craft.auraRing.visible = false;
     this.craft.laserBeam.visible = false;
-    this.spawnBurst(0, this.playerY, this.playerZ, 34, this.currentSkin.coreColor, 13);
-    this.spawnBurst(0, this.playerY, this.playerZ, 16, 0xf43f5e, 10);
+    this.resetBarrageProjectiles();
+    this.spawnBurst(this.playerX, this.playerY, this.playerZ, 34, this.currentSkin.coreColor, 13);
+    this.spawnBurst(this.playerX, this.playerY, this.playerZ, 16, 0xf43f5e, 10);
     soundEngine.playCrash();
+    if (this.gameMode === 'endless') {
+      this.callbacks.onChallengeEvent?.({ infinityDistanceInRun: Math.floor(this.playerZ) });
+    }
     this.emitHud(true);
   }
 
   private triggerComplete(): void {
     this.phase = 'completed';
     this.playerZ = this.currentLevel.length;
-    this.spawnBurst(0, this.playerY, this.playerZ, 40, 0xfacc15, 14);
-    this.spawnBurst(0, this.playerY, this.playerZ, 24, 0x22d3ee, 11);
+    this.spawnBurst(this.playerX, this.playerY, this.playerZ, 40, 0xfacc15, 14);
+    this.spawnBurst(this.playerX, this.playerY, this.playerZ, 24, 0x22d3ee, 11);
     soundEngine.playLevelComplete();
+    this.callbacks.onChallengeEvent?.({ courseCompletedMode: this.gameMode });
     const snap = this.buildSnapshot();
     this.callbacks.onHudUpdate(snap);
     this.callbacks.onLevelComplete(snap);
   }
 
   private snapCameraToPlayer(): void {
+    this.camera.up.set(0, 1, 0);
     if (this.cameraMode === 'isometric') {
-      this.camera.position.set(-13.2, 6.2 + (this.playerY - 6.0) * 0.2, this.playerZ - 7.5);
+      this.camBasePos.set(-13.2, 6.2 + (this.playerY - 6.0) * 0.2, this.playerZ - 7.5);
       _camCurrentLook.set(0, 6.0 + (this.playerY - 6.0) * 0.14, this.playerZ + 8.5);
     } else {
-      this.camera.position.set(-2.6, 6.3 + (this.playerY - 6.0) * 0.35, this.playerZ - 11.5);
+      this.camBasePos.set(-2.6, 6.3 + (this.playerY - 6.0) * 0.35, this.playerZ - 11.5);
       _camCurrentLook.set(0, 6.0 + (this.playerY - 6.0) * 0.2, this.playerZ + 11.0);
     }
+    this.resetCameraShake();
+    this.camera.position.copy(this.camBasePos);
     this.camera.lookAt(_camCurrentLook);
   }
 
   private updateCamera(dt: number): void {
+    const targetInvertRoll = this.invertCamTimer > 0 ? Math.PI : 0;
+    const targetMirror = this.mirrorCamTimer > 0 ? 1.0 : 0.0;
+    this.camMirrorBlend = THREE.MathUtils.damp(this.camMirrorBlend, targetMirror, 5.5, dt);
+
+    const chaseMirrorTilt = this.cameraMode === 'chase' ? this.camMirrorBlend * 0.42 : 0;
+    this.camRollAngle = THREE.MathUtils.damp(
+      this.camRollAngle,
+      targetInvertRoll + chaseMirrorTilt,
+      6.2,
+      dt
+    );
+    this.camera.up.set(Math.sin(this.camRollAngle), Math.cos(this.camRollAngle), 0).normalize();
+
     if (this.cameraMode === 'isometric') {
-      _camTargetPos.set(-13.2, 6.2 + (this.playerY - 6.0) * 0.2, this.playerZ - 7.5);
-      _camTargetLook.set(0, 6.0 + (this.playerY - 6.0) * 0.14, this.playerZ + 8.5);
+      const camX = THREE.MathUtils.lerp(-13.2, 13.2, this.camMirrorBlend);
+      const arcY = Math.sin(this.camMirrorBlend * Math.PI) * 3.4;
+      _camTargetPos.set(
+        camX,
+        6.2 + (this.playerY - 6.0) * 0.2 + arcY,
+        this.playerZ - 7.5
+      );
+      _camTargetLook.set(
+        this.playerX * 0.35,
+        6.0 + (this.playerY - 6.0) * 0.14,
+        this.playerZ + 8.5
+      );
     } else {
-      _camTargetPos.set(-2.6, 6.3 + (this.playerY - 6.0) * 0.35, this.playerZ - 11.5);
-      _camTargetLook.set(0, 6.0 + (this.playerY - 6.0) * 0.2, this.playerZ + 11.0);
+      const camX = THREE.MathUtils.lerp(-2.6, 4.8, this.camMirrorBlend) + this.playerX * 0.45;
+      _camTargetPos.set(camX, 6.3 + (this.playerY - 6.0) * 0.35, this.playerZ - 11.5);
+      _camTargetLook.set(
+        this.playerX * 0.65,
+        6.0 + (this.playerY - 6.0) * 0.2,
+        this.playerZ + 11.0
+      );
     }
 
+    // Damp unshaken camera base position so shake offsets never pollute follow tracking
     const dampLambda = 11;
-    this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, _camTargetPos.x, dampLambda, dt);
-    this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, _camTargetPos.y, dampLambda, dt);
-    this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, _camTargetPos.z, 18, dt);
+    this.camBasePos.x = THREE.MathUtils.damp(this.camBasePos.x, _camTargetPos.x, dampLambda, dt);
+    this.camBasePos.y = THREE.MathUtils.damp(this.camBasePos.y, _camTargetPos.y, dampLambda, dt);
+    this.camBasePos.z = THREE.MathUtils.damp(this.camBasePos.z, _camTargetPos.z, 18, dt);
 
     _camCurrentLook.x = THREE.MathUtils.damp(_camCurrentLook.x, _camTargetLook.x, dampLambda, dt);
     _camCurrentLook.y = THREE.MathUtils.damp(_camCurrentLook.y, _camTargetLook.y, dampLambda, dt);
     _camCurrentLook.z = THREE.MathUtils.damp(_camCurrentLook.z, _camTargetLook.z, 18, dt);
 
+    const isWarping = this.xShiftTimer > 0 || this.invertCamTimer > 0 || this.mirrorCamTimer > 0;
     const targetFov =
       this.phase === 'playing' && this.activeSpeedMultiplier > 1.15
         ? 57
         : this.powerActiveRemaining > 0 && this.currentSkin.powerType === 'slowmo'
           ? 48
-          : 52;
+          : isWarping
+            ? 56
+            : 52;
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 6, dt);
       this.camera.updateProjectionMatrix();
     }
 
-    if (this.shakeIntensity > 0.005) {
-      const sx = (Math.random() - 0.5) * this.shakeIntensity;
-      const sy = (Math.random() - 0.5) * this.shakeIntensity;
-      this.camera.position.x += sx;
-      this.camera.position.y += sy;
-      this.shakeIntensity = THREE.MathUtils.damp(this.shakeIntensity, 0, 8, dt);
+    // Proximity-based dynamic hazard rumble during active flight
+    let targetProx = 0;
+    if (this.phase === 'playing') {
+      const power = this.currentSkin.powerType;
+      const isIntangible =
+        (this.powerActiveRemaining > 0 && (power === 'phase' || power === 'warp' || power === 'smash')) ||
+        this.invulnTimer > 0;
+      const endlessRamp =
+        this.gameMode === 'endless' ? Math.min(0.45, this.playerZ / 1500) : 0;
+      const speedScale = 0.65 + 0.35 * (this.activeSpeedMultiplier + endlessRamp);
+      const rawProx = this.computeHazardProximity(this.playerZ, this.playerY);
+      const envTremor =
+        this.envEventPhase === 'active' && this.envEventType === 'magTurbulence' ? 0.12 : 0;
+      targetProx = Math.min(1, rawProx * speedScale * (isIntangible ? 0.25 : 1.0) + envTremor);
+    }
+    this.proximityShake = THREE.MathUtils.damp(this.proximityShake, targetProx, 15, dt);
+
+    // Decay collision trauma
+    if (this.cameraTrauma > 0) {
+      this.cameraTrauma = Math.max(0, this.cameraTrauma - this.traumaDecayRate * dt);
     }
 
+    // Second-order spring recoil for directional collision impulse
+    const springStiffness = 145;
+    const springDamping = 16;
+    const fx = -springStiffness * this.camImpulseOffset.x - springDamping * this.camImpulseVel.x;
+    const fy = -springStiffness * this.camImpulseOffset.y - springDamping * this.camImpulseVel.y;
+    const fz = -springStiffness * this.camImpulseOffset.z - springDamping * this.camImpulseVel.z;
+    this.camImpulseVel.x += fx * dt;
+    this.camImpulseVel.y += fy * dt;
+    this.camImpulseVel.z += fz * dt;
+    this.camImpulseOffset.x += this.camImpulseVel.x * dt;
+    this.camImpulseOffset.y += this.camImpulseVel.y * dt;
+    this.camImpulseOffset.z += this.camImpulseVel.z * dt;
+
+    // Combine squared trauma, proximity rumble, and directional collision recoil into Camera.position offset
+    const motionScale = this.prefersReducedMotion ? 0.25 : 1.0;
+    const traumaAmp = this.cameraTrauma * this.cameraTrauma * 0.72;
+    const proxAmp = this.proximityShake * 0.18;
+    const totalOscAmp = (traumaAmp + proxAmp) * motionScale;
+
+    if (
+      totalOscAmp > 0.001 ||
+      this.camImpulseOffset.lengthSq() > 1e-6
+    ) {
+      const t = this.totalElapsed;
+      const ox =
+        (Math.sin(t * 47.3) * 0.55 + Math.cos(t * 73.1) * 0.25 + (Math.random() - 0.5) * 0.5) *
+        totalOscAmp;
+      const oy =
+        (Math.cos(t * 53.7) * 0.55 + Math.sin(t * 81.9) * 0.25 + (Math.random() - 0.5) * 0.5) *
+        totalOscAmp;
+      const oz =
+        (Math.sin(t * 39.1 + 1.3) * 0.4 + (Math.random() - 0.5) * 0.35) * totalOscAmp * 0.7;
+
+      this.camShakeOffset.set(
+        THREE.MathUtils.clamp(ox + this.camImpulseOffset.x, -1.6, 1.6),
+        THREE.MathUtils.clamp(oy + this.camImpulseOffset.y, -1.6, 1.6),
+        THREE.MathUtils.clamp(oz + this.camImpulseOffset.z, -1.6, 1.6)
+      );
+    } else {
+      this.camShakeOffset.set(0, 0, 0);
+    }
+
+    this.camera.position.copy(this.camBasePos).add(this.camShakeOffset);
     this.camera.lookAt(_camCurrentLook);
   }
 
@@ -1737,17 +2804,38 @@ export class ZigzagEngine {
     const pulse = 0.88 + Math.sin(this.totalElapsed * 24) * 0.14;
     this.craft.thrusterCone.scale.set(pulse, pulse, this.phase === 'playing' ? 1.25 : 0.8);
 
+    const minAnimZ = this.playerZ - 34;
+    const maxAnimZ = this.playerZ + 125;
+
     for (const obs of this.runtimeObstacles) {
       if (obs.destroyed) continue;
-      if (obs.data.type === 'saw') {
-        obs.group.rotation.x += (obs.data.spinSpeed ?? 3.5) * dt;
-      } else if (obs.data.type === 'starMine') {
-        obs.group.rotation.x += (obs.data.spinSpeed ?? 3.8) * dt;
+      const d = obs.data;
+      const obsZ = d.type === 'spikes' ? (d.zStart + d.zEnd) * 0.5 : d.type === 'laserBar' ? d.z1 : d.z;
+      if (obsZ < minAnimZ || obsZ > maxAnimZ) continue;
+
+      if (d.type === 'saw') {
+        obs.group.rotation.x += (d.spinSpeed ?? 3.5) * dt;
+      } else if (d.type === 'starMine') {
+        obs.group.rotation.x += (d.spinSpeed ?? 3.8) * dt;
+      } else if (d.type === 'patrolDrone' && obs.animatedSubgroup) {
+        obs.animatedSubgroup.position.y =
+          d.baseY + Math.sin(this.totalElapsed * d.speed + (d.phase ?? 0)) * d.ampY;
+        obs.animatedSubgroup.rotation.y += dt * 2.8;
+      } else if (d.type === 'rotaryGate' && obs.animatedSubgroup) {
+        obs.animatedSubgroup.rotation.x += d.spinSpeed * dt;
+      } else if (d.type === 'orbitMine' && obs.animatedSubgroup) {
+        obs.animatedSubgroup.rotation.x += d.spinSpeed * dt;
+      } else if (d.type === 'warpGate' && obs.animatedSubgroup) {
+        obs.animatedSubgroup.rotation.z += (obs.triggered ? 4.8 : 1.7) * dt;
+        if (obs.warpMembraneMat && obs.warpMembraneMat.opacity > 0.16) {
+          obs.warpMembraneMat.opacity = Math.max(0.16, obs.warpMembraneMat.opacity - dt * 1.4);
+        }
       }
     }
 
     for (const item of this.runtimeCollectibles) {
       if (item.collected) continue;
+      if (item.data.z < minAnimZ || item.data.z > maxAnimZ) continue;
       if (item.data.type === 'gold') {
         item.group.rotation.y += dt * 2.4;
         item.group.rotation.x = Math.sin(this.totalElapsed * 2.5 + item.data.z) * 0.35;
@@ -1771,6 +2859,7 @@ export class ZigzagEngine {
     const cpPct = this.lastCheckpoint
       ? Math.floor((this.lastCheckpoint.z / this.currentLevel.length) * 100)
       : 0;
+    const warpRemaining = Math.max(this.xShiftTimer, this.invertCamTimer, this.mirrorCamTimer);
     return {
       phase: this.phase,
       mode: this.gameMode,
@@ -1790,13 +2879,26 @@ export class ZigzagEngine {
       powerActiveRemaining: Number(this.powerActiveRemaining.toFixed(1)),
       powerDuration: this.currentSkin.powerDuration,
       shieldActive: this.shieldActive,
+      shieldCharges: this.shieldCharges,
       musicIntensity: this.currentMusicIntensity,
+      activeWarpEffect: warpRemaining > 0 ? this.activeWarpEffect : null,
+      activeWarpRemaining: Number(warpRemaining.toFixed(1)),
+      envEventType: this.envEventPhase !== 'idle' ? this.envEventType : null,
+      envEventPhase: this.envEventPhase,
+      envEventRemaining: Number(Math.max(0, this.envEventTimer).toFixed(1)),
     };
   }
 
   private emitHud(force = false): void {
     if (force || this.totalElapsed - this.lastHudEmit >= 0.05) {
       this.lastHudEmit = this.totalElapsed;
+      if (this.gameMode === 'endless' && this.phase === 'playing') {
+        const dist = Math.floor(this.playerZ);
+        if (dist >= this.lastReportedInfinityDist + 10) {
+          this.lastReportedInfinityDist = dist;
+          this.callbacks.onChallengeEvent?.({ infinityDistanceInRun: dist });
+        }
+      }
       this.callbacks.onHudUpdate(this.buildSnapshot());
     }
   }
@@ -1840,14 +2942,18 @@ export class ZigzagEngine {
 
       if (this.phase === 'ready') {
         const bob = Math.sin(this.totalElapsed * 3.5) * 0.14;
-        this.craft.group.position.set(0, this.playerY + bob, this.playerZ);
+        this.craft.group.position.set(this.playerX, this.playerY + bob, this.playerZ);
         this.craft.group.rotation.x = THREE.MathUtils.damp(this.craft.group.rotation.x, 0, 10, dt);
       } else if (this.phase === 'playing') {
+        this.updateEnvironmentalEvents(dt);
         this.updateSpecialPowerState(dt);
         this.stepPhysics(dt);
+        this.updateBarrageProjectiles(dt);
 
-        const climbInput =
-          this.gameMode === 'inverted' ? !this.isHolding : this.isHolding;
+        const gravityInverted =
+          (this.gameMode === 'inverted') !==
+          (this.envEventPhase === 'active' && this.envEventType === 'gravityShift');
+        const climbInput = gravityInverted ? !this.isHolding : this.isHolding;
         const targetPitch =
           this.railState !== 'free'
             ? 0
@@ -1855,8 +2961,13 @@ export class ZigzagEngine {
               ? -(42 * Math.PI) / 180
               : (42 * Math.PI) / 180;
         this.craftPitch = THREE.MathUtils.damp(this.craftPitch, targetPitch, 28, dt);
-        this.craft.group.position.set(0, this.playerY, this.playerZ);
+        this.craft.group.position.set(this.playerX, this.playerY, this.playerZ);
         this.craft.group.rotation.x = this.craftPitch;
+
+        const targetFlipZ =
+          this.envEventPhase === 'active' && this.envEventType === 'gravityShift' ? Math.PI : 0;
+        this.envBodyFlipAngle = THREE.MathUtils.damp(this.envBodyFlipAngle, targetFlipZ, 9, dt);
+        this.craft.bodyGroup.rotation.z = this.envBodyFlipAngle;
 
         this.updateTrailGeometry();
         this.emitHud(false);
@@ -1921,10 +3032,13 @@ export class ZigzagEngine {
     clearTimeout(this.frameId);
 
     window.removeEventListener('resize', this.handleResize);
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    this.reducedMotionQuery?.removeEventListener('change', this.handleReducedMotionChange);
     this.renderer.domElement.removeEventListener('webglcontextlost', this.handleContextLost);
     this.renderer.domElement.removeEventListener('webglcontextrestored', this.handleContextRestored);
 
     this.clearLevelGroup();
+    disposeSharedModelCache();
 
     this.trailMeshA.geometry.dispose();
     this.trailMeshB.geometry.dispose();
@@ -1933,6 +3047,8 @@ export class ZigzagEngine {
     (this.trailLine.material as THREE.Material).dispose();
     this.particleMesh.geometry.dispose();
     (this.particleMesh.material as THREE.Material).dispose();
+    this.barrageMesh.geometry.dispose();
+    (this.barrageMesh.material as THREE.Material).dispose();
 
     this.bloomPass?.dispose();
     this.composer?.dispose();
