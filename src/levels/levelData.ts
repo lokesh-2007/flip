@@ -623,26 +623,49 @@ export const ENDLESS_LEVEL_BASE: LevelDefinition = {
   checkpoints: [],
 };
 
+export interface EndlessAdaptiveParams {
+  sawSpacingMult: number;
+  sawVelocityMult: number;
+}
+
 export function generateEndlessChunk(
   chunkIndex: number,
-  zStart: number
+  zStart: number,
+  adaptive: EndlessAdaptiveParams = { sawSpacingMult: 1.0, sawVelocityMult: 1.0 }
 ): { obstacles: LevelObstacle[]; collectibles: CollectibleItem[] } {
   const obstacles: LevelObstacle[] = [];
   const collectibles: CollectibleItem[] = [];
   const pattern = chunkIndex % 8;
-  const spinBase = 3.6 + Math.min(2.6, chunkIndex * 0.12);
+
+  const spacingMult = Math.max(0.8, Math.min(1.28, adaptive.sawSpacingMult));
+  const velocityMult = Math.max(0.72, Math.min(1.38, adaptive.sawVelocityMult));
+  const spinBase = (3.6 + Math.min(2.6, chunkIndex * 0.12)) * velocityMult;
+  const motionScale = Math.max(0, Math.min(1.35, (velocityMult - 0.68) * 1.45));
+  const sawDriftSpeed = (1.35 + Math.min(1.1, chunkIndex * 0.05)) * velocityMult;
 
   if (pattern === 0) {
-    // T-Block Slalom + Gold Zigzag
+    // T-Block Slalom + Adaptive Spinning Saw + Gold Zigzag
+    const sawZ = zStart + 74 + (spacingMult - 1.0) * 10;
     obstacles.push(
       { id: nextId('eb'), type: 'block', z: zStart + 22, y: 9.4, width: 5.2, height: 4.5, shape: 'tTop' },
       { id: nextId('eb'), type: 'block', z: zStart + 50, y: 2.6, width: 5.2, height: 4.5, shape: 'tBottom' },
-      { id: nextId('esaw'), type: 'saw', z: zStart + 76, y: 6.0, radius: 1.65, spinSpeed: spinBase }
+      {
+        id: nextId('esaw'),
+        type: 'saw',
+        z: sawZ,
+        y: 6.0,
+        radius: 1.65,
+        spinSpeed: spinBase,
+        driftAmpY: 0.95 * motionScale,
+        driftAmpZ: 0.65 * motionScale,
+        driftSpeed: sawDriftSpeed,
+        driftPhase: chunkIndex * 0.9,
+      }
     );
     collectibles.push(
       ...goldLine(zStart + 14, 4.0, zStart + 30, 4.0, 4, 120),
       ...goldLine(zStart + 42, 8.0, zStart + 58, 8.0, 4, 120),
-      ...goldDiamond(zStart + 76, 9.4, 1.5, 1.1, 140)
+      ...goldDiamond(sawZ, 9.4, 1.5, 1.1, 140)
     );
   } else if (pattern === 1) {
     // Diagonal Laser Chute + Patrol Drone
@@ -657,7 +680,7 @@ export function generateEndlessChunk(
       ...goldDiamond(zStart + 68, 6.0, 1.6, 1.2, 150)
     );
   } else if (pattern === 2) {
-    // Spatial Warp Gate + Gate Thread + Center Split + Ceiling Spikes
+    // Spatial Warp Gate + Gate Thread + Adaptive Saw + Ceiling Spikes
     const warpEffects: Array<'shiftLeft' | 'invertCam' | 'shiftRight' | 'mirrorCam'> = [
       'shiftLeft',
       'invertCam',
@@ -665,12 +688,24 @@ export function generateEndlessChunk(
       'mirrorCam',
     ];
     const warpEffect = warpEffects[Math.floor(chunkIndex / 8) % warpEffects.length];
+    const sawY = Math.max(2.3, 3.4 - (spacingMult - 1.0) * 1.1);
     obstacles.push(
       { id: nextId('ewg'), type: 'warpGate', z: zStart + 8, warpEffect, duration: 4.2 },
       { id: nextId('eb'), type: 'block', z: zStart + 26, y: 10.2, width: 4.2, height: 3.6, shape: 'rect' },
       { id: nextId('eb'), type: 'block', z: zStart + 26, y: 1.8, width: 4.2, height: 3.6, shape: 'rect' },
       { id: nextId('esp'), type: 'spikes', zStart: zStart + 44, zEnd: zStart + 66, placement: 'ceiling', height: 1.65 },
-      { id: nextId('esaw'), type: 'saw', z: zStart + 55, y: 3.4, radius: 1.55, spinSpeed: -spinBase },
+      {
+        id: nextId('esaw'),
+        type: 'saw',
+        z: zStart + 55,
+        y: sawY,
+        radius: 1.55,
+        spinSpeed: -spinBase,
+        driftAmpY: 0.7 * motionScale,
+        driftAmpZ: 0.8 * motionScale,
+        driftSpeed: sawDriftSpeed * 0.9,
+        driftPhase: chunkIndex * 1.3,
+      },
       { id: nextId('eb'), type: 'block', z: zStart + 80, y: 6.0, width: 5.0, height: 3.4, shape: 'rect' }
     );
     collectibles.push(
@@ -691,12 +726,38 @@ export function generateEndlessChunk(
       ...goldLine(zStart + 68, 7.6, zStart + 84, 7.6, 4, 140)
     );
   } else if (pattern === 4) {
-    // Speed Boost Surge + Twin Saws + Patrol Drone
+    // Speed Boost Surge + Adaptive Twin Saws + Patrol Drone
     const boost = 1.15 + Math.min(0.25, chunkIndex * 0.02);
+    const halfGap = Math.max(2.15, Math.min(3.35, 2.6 * spacingMult));
+    const zStagger = spacingMult > 1.02 ? (spacingMult - 1.0) * 14 : 0;
     obstacles.push(
       { id: nextId('esg'), type: 'speedGate', z: zStart + 12, multiplier: boost },
-      { id: nextId('esaw'), type: 'saw', z: zStart + 38, y: 8.6, radius: 1.7, spinSpeed: spinBase },
-      { id: nextId('esaw'), type: 'saw', z: zStart + 38, y: 3.4, radius: 1.7, spinSpeed: -spinBase },
+      {
+        id: nextId('esaw'),
+        type: 'saw',
+        z: zStart + 38 - zStagger,
+        y: 6.0 + halfGap,
+        radius: 1.7,
+        spinSpeed: spinBase,
+        driftAmpY: 0.45 * motionScale,
+        driftAmpZ: 0.95 * motionScale,
+        driftSpeed: sawDriftSpeed,
+        driftPhase: chunkIndex * 0.6,
+        pairRole: 'upper',
+      },
+      {
+        id: nextId('esaw'),
+        type: 'saw',
+        z: zStart + 38 + zStagger,
+        y: 6.0 - halfGap,
+        radius: 1.7,
+        spinSpeed: -spinBase,
+        driftAmpY: 0.45 * motionScale,
+        driftAmpZ: 0.95 * motionScale,
+        driftSpeed: sawDriftSpeed,
+        driftPhase: chunkIndex * 0.6 + Math.PI,
+        pairRole: 'lower',
+      },
       { id: nextId('epd'), type: 'patrolDrone', z: zStart + 68, baseY: 6.0, ampY: 3.2, speed: 2.7, radius: 1.3 }
     );
     collectibles.push(
@@ -716,7 +777,7 @@ export function generateEndlessChunk(
       ...goldDiamond(zStart + 76, 8.6, 1.4, 1.0, 150)
     );
   } else if (pattern === 6) {
-    // Secondary Warp Gate + Star Mine Alternating Corridor + Floor Spikes + Laser Bar
+    // Secondary Warp Gate + Alternating Saw Weave + Floor Spikes + Laser Bar
     const warpEffects: Array<'mirrorCam' | 'shiftRight' | 'invertCam' | 'shiftLeft'> = [
       'mirrorCam',
       'shiftRight',
@@ -724,10 +785,32 @@ export function generateEndlessChunk(
       'shiftLeft',
     ];
     const warpEffect = warpEffects[Math.floor(chunkIndex / 8) % warpEffects.length];
+    const sawCenterZ = zStart + 35;
+    const sawSpanZ = 11 * spacingMult;
     obstacles.push(
       { id: nextId('ewg'), type: 'warpGate', z: zStart + 8, warpEffect, duration: 4.2 },
-      { id: nextId('esm'), type: 'starMine', z: zStart + 24, y: 4.3, radius: 1.65, spinSpeed: spinBase },
-      { id: nextId('esm'), type: 'starMine', z: zStart + 46, y: 8.1, radius: 1.65, spinSpeed: -spinBase },
+      {
+        id: nextId('esaw'),
+        type: 'saw',
+        z: sawCenterZ - sawSpanZ,
+        y: 4.2,
+        radius: 1.55,
+        spinSpeed: spinBase,
+        driftAmpY: 0.65 * motionScale,
+        driftSpeed: sawDriftSpeed,
+        driftPhase: chunkIndex * 0.5,
+      },
+      {
+        id: nextId('esaw'),
+        type: 'saw',
+        z: sawCenterZ + sawSpanZ,
+        y: 8.1,
+        radius: 1.55,
+        spinSpeed: -spinBase,
+        driftAmpY: 0.65 * motionScale,
+        driftSpeed: sawDriftSpeed,
+        driftPhase: chunkIndex * 0.5 + Math.PI * 0.5,
+      },
       { id: nextId('esp'), type: 'spikes', zStart: zStart + 60, zEnd: zStart + 82, placement: 'floor', height: 1.6 },
       { id: nextId('elb'), type: 'laserBar', z1: zStart + 66, y1: 11.2, z2: zStart + 74, y2: 7.4, thickness: 0.24 }
     );
@@ -752,4 +835,5 @@ export function generateEndlessChunk(
 
   return { obstacles, collectibles };
 }
+
 

@@ -141,6 +141,10 @@ interface RuntimeObstacle {
   animatedSubgroup?: THREE.Group;
   warpMembraneMat?: THREE.MeshBasicMaterial;
   subBoxes?: Array<{ zMin: number; zMax: number; yMin: number; yMax: number }>;
+  sawBaseY?: number;
+  sawBaseZ?: number;
+  sawMotionPhase?: number;
+  sawSpawnVelMult?: number;
   triggered?: boolean;
   destroyed?: boolean;
   nearMissed?: boolean;
@@ -258,6 +262,15 @@ export class ZigzagEngine {
   private lastReportedInfinityDist: number = 0;
   private towerInstances: Array<{ x: number; y: number; z: number; w: number; h: number }> = [];
   private floaterInstances: Array<{ x: number; y: number; z: number; s: number; rx: number; ry: number }> = [];
+
+  // Endless Adaptive Difficulty state
+  private nearMissHistory: number[] = [];
+  private collisionHistory: Array<{ time: number; weight: number }> = [];
+  private adaptiveFlowScore: number = 0;
+  private adaptiveSawSpacingMult: number = 1.0;
+  private adaptiveSawVelocityMult: number = 1.0;
+  private endlessCleanRunTime: number = 0;
+  private lastAdjustedSpacingMult: number = 1.0;
 
   // Gameplay state
   private phase: GamePhase = 'ready';
@@ -904,6 +917,7 @@ export class ZigzagEngine {
     mode: GameMode = this.gameMode,
     preserveAttempts = false
   ): void {
+    const wasEndless = this.gameMode === 'endless';
     this.currentLevel = level;
     this.gameMode = mode;
     this.clearLevelGroup();
@@ -1035,6 +1049,8 @@ export class ZigzagEngine {
     this.runtimeCheckpoints = [];
     this.finishPortalRing = null;
 
+    this.resetAdaptiveDifficulty(!(isEndless && preserveAttempts && wasEndless));
+
     if (isEndless) {
       this.nextEndlessChunkIdx = 0;
       this.nextEndlessZ = 34;
@@ -1127,6 +1143,13 @@ export class ZigzagEngine {
       animatedSubgroup,
       warpMembraneMat,
       subBoxes,
+      sawBaseY: obs.type === 'saw' ? obs.y : undefined,
+      sawBaseZ: obs.type === 'saw' ? obs.z : undefined,
+      sawMotionPhase: obs.type === 'saw' ? (obs.driftPhase ?? 0) : undefined,
+      sawSpawnVelMult:
+        obs.type === 'saw' && this.gameMode === 'endless'
+          ? this.adaptiveSawVelocityMult
+          : undefined,
       triggered: false,
       destroyed: false,
       nearMissed: false,
@@ -1165,7 +1188,11 @@ export class ZigzagEngine {
     while (this.nextEndlessZ < horizonZ) {
       const { obstacles, collectibles } = generateEndlessChunk(
         this.nextEndlessChunkIdx,
-        this.nextEndlessZ
+        this.nextEndlessZ,
+        {
+          sawSpacingMult: this.adaptiveSawSpacingMult,
+          sawVelocityMult: this.adaptiveSawVelocityMult,
+        }
       );
       for (const obs of obstacles) {
         this.addObstacleToScene(
@@ -1177,8 +1204,9 @@ export class ZigzagEngine {
       for (const item of collectibles) {
         this.addCollectibleToScene(item);
       }
+      const adaptiveChunkDelta = Math.round((this.adaptiveSawSpacingMult - 1.0) * 20);
       this.nextEndlessChunkIdx += 1;
-      this.nextEndlessZ += ENDLESS_CHUNK_LENGTH;
+      this.nextEndlessZ += ENDLESS_CHUNK_LENGTH + adaptiveChunkDelta;
     }
 
     const cullZ = currentZ - 42;
@@ -1869,8 +1897,105 @@ export class ZigzagEngine {
     return maxProx;
   }
 
+  private resetAdaptiveDifficulty(fullReset: boolean): void {
+    this.endlessCleanRunTime = 0;
+    if (fullReset) {
+      this.nearMissHistory = [];
+      this.collisionHistory = [];
+      this.adaptiveFlowScore = 0;
+      this.adaptiveSawSpacingMult = 1.0;
+      this.adaptiveSawVelocityMult = 1.0;
+      this.lastAdjustedSpacingMult = 1.0;
+    }
+  }
+
+  private recordAdaptiveNearMiss(): void {
+    if (this.gameMode !== 'endless') return;
+    this.nearMissHistory.push(this.totalElapsed);
+  }
+
+  private recordAdaptiveCollision(weight: number): void {
+    if (this.gameMode !== 'endless') return;
+    this.collisionHistory.push({ time: this.totalElapsed, weight });
+    this.endlessCleanRunTime *= 0.25;
+  }
+
+  private adjustUpcomingEndlessSaws(): void {
+    this.lastAdjustedSpacingMult = this.adaptiveSawSpacingMult;
+    const minAdjustZ = this.playerZ + 48;
+    const targetHalfGap = THREE.MathUtils.clamp(2.6 * this.adaptiveSawSpacingMult, 2.15, 3.35);
+
+    for (const obs of this.runtimeObstacles) {
+      if (obs.destroyed || obs.data.type !== 'saw') continue;
+      const d = obs.data;
+      const baseZ = obs.sawBaseZ ?? d.z;
+      if (baseZ <= minAdjustZ) continue;
+
+      if (d.pairRole === 'upper' || d.pairRole === 'lower') {
+        const nextBaseY = d.pairRole === 'upper' ? 6.0 + targetHalfGap : 6.0 - targetHalfGap;
+        obs.sawBaseY = nextBaseY;
+        if (!d.driftAmpY) {
+          d.y = nextBaseY;
+          obs.group.position.y = nextBaseY;
+        }
+      }
+    }
+  }
+
+  private updateAdaptiveDifficulty(dt: number): void {
+    if (this.gameMode !== 'endless' || this.phase !== 'playing') return;
+
+    const now = this.totalElapsed;
+    const nearMissWindow = 32;
+    const collisionWindow = 45;
+
+    while (this.nearMissHistory.length > 0 && now - this.nearMissHistory[0] > nearMissWindow) {
+      this.nearMissHistory.shift();
+    }
+    while (this.collisionHistory.length > 0 && now - this.collisionHistory[0].time > collisionWindow) {
+      this.collisionHistory.shift();
+    }
+
+    this.endlessCleanRunTime += dt;
+
+    const nearMissRatePerMin = (this.nearMissHistory.length / nearMissWindow) * 60;
+    let collisionLoad = 0;
+    for (let i = 0; i < this.collisionHistory.length; i++) {
+      const c = this.collisionHistory[i];
+      collisionLoad += c.weight * Math.exp(-(now - c.time) / 22);
+    }
+
+    const nearMissDrive =
+      Math.min(0.65, nearMissRatePerMin * 0.065) * (collisionLoad >= 0.4 ? 0.25 : 1.0);
+    const cleanDrive = Math.min(0.45, Math.max(0, this.endlessCleanRunTime - 8) * 0.018);
+    const collisionPenalty = collisionLoad * 0.58;
+
+    const targetFlow = THREE.MathUtils.clamp(
+      nearMissDrive + cleanDrive - collisionPenalty,
+      -1.0,
+      1.0
+    );
+
+    this.adaptiveFlowScore = THREE.MathUtils.damp(this.adaptiveFlowScore, targetFlow, 0.55, dt);
+    this.adaptiveSawSpacingMult = THREE.MathUtils.clamp(
+      1.0 - this.adaptiveFlowScore * 0.22,
+      0.8,
+      1.28
+    );
+    this.adaptiveSawVelocityMult = THREE.MathUtils.clamp(
+      1.0 + this.adaptiveFlowScore * 0.34,
+      0.72,
+      1.38
+    );
+
+    if (Math.abs(this.adaptiveSawSpacingMult - this.lastAdjustedSpacingMult) >= 0.045) {
+      this.adjustUpcomingEndlessSaws();
+    }
+  }
+
   private awardNearMiss(): void {
     this.nearMissCount += 1;
+    this.recordAdaptiveNearMiss();
     const bonus = Math.round(50 * this.streakMultiplier);
     this.addScore(bonus);
     this.powerCharge = Math.min(100, this.powerCharge + 8);
@@ -2502,6 +2627,7 @@ export class ZigzagEngine {
             }
             this.invulnTimer =
               (power === 'revive' ? 1.6 : 1.15) + this.upgradeLevels.plating * 0.25;
+            this.recordAdaptiveCollision(0.65);
             const impact = this.computeCollisionForce(hitObs);
             const shieldForce = power === 'revive' ? Math.max(0.95, impact.force * 1.1) : impact.force * 0.72;
             this.triggerCameraShake(shieldForce, impact.dirY, impact.dirZ, (Math.random() - 0.5) * 0.4, 1.8);
@@ -2619,6 +2745,7 @@ export class ZigzagEngine {
   private triggerCrash(hitObs: RuntimeObstacle | null = null): void {
     this.phase = 'crashed';
     this.crashTimer = 0;
+    this.recordAdaptiveCollision(1.0);
     const impact = this.computeCollisionForce(hitObs);
     this.triggerCameraShake(
       Math.max(0.88, impact.force),
@@ -2814,7 +2941,32 @@ export class ZigzagEngine {
       if (obsZ < minAnimZ || obsZ > maxAnimZ) continue;
 
       if (d.type === 'saw') {
-        obs.group.rotation.x += (d.spinSpeed ?? 3.5) * dt;
+        const velRatio =
+          this.gameMode === 'endless'
+            ? THREE.MathUtils.clamp(
+                this.adaptiveSawVelocityMult / (obs.sawSpawnVelMult || 1),
+                0.55,
+                1.75
+              )
+            : 1.0;
+        obs.group.rotation.x += (d.spinSpeed ?? 3.5) * velRatio * dt;
+        if (this.gameMode === 'endless' && (d.driftAmpY || d.driftAmpZ)) {
+          const nextPhase =
+            (obs.sawMotionPhase ?? d.driftPhase ?? 0) +
+            (d.driftSpeed ?? 1.35) * velRatio * dt;
+          obs.sawMotionPhase = nextPhase;
+          const baseY = obs.sawBaseY ?? d.y;
+          const baseZ = obs.sawBaseZ ?? d.z;
+          const nextY = THREE.MathUtils.clamp(
+            baseY + Math.sin(nextPhase) * (d.driftAmpY ?? 0),
+            1.5,
+            10.5
+          );
+          const nextZ = baseZ + Math.cos(nextPhase * 0.8) * (d.driftAmpZ ?? 0);
+          d.y = nextY;
+          d.z = nextZ;
+          obs.group.position.set(0, nextY, nextZ);
+        }
       } else if (d.type === 'starMine') {
         obs.group.rotation.x += (d.spinSpeed ?? 3.8) * dt;
       } else if (d.type === 'patrolDrone' && obs.animatedSubgroup) {
@@ -2945,6 +3097,7 @@ export class ZigzagEngine {
         this.craft.group.position.set(this.playerX, this.playerY + bob, this.playerZ);
         this.craft.group.rotation.x = THREE.MathUtils.damp(this.craft.group.rotation.x, 0, 10, dt);
       } else if (this.phase === 'playing') {
+        this.updateAdaptiveDifficulty(dt);
         this.updateEnvironmentalEvents(dt);
         this.updateSpecialPowerState(dt);
         this.stepPhysics(dt);

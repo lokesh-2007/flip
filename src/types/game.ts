@@ -52,6 +52,11 @@ export interface SawObstacle {
   y: number;
   radius: number;
   spinSpeed?: number;
+  driftAmpY?: number;
+  driftAmpZ?: number;
+  driftSpeed?: number;
+  driftPhase?: number;
+  pairRole?: 'upper' | 'lower';
 }
 
 export interface StarMineObstacle {
